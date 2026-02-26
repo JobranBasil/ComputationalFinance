@@ -1,124 +1,89 @@
-# src/agents.py
 from __future__ import annotations
 
-from typing import List, Optional, Tuple, Union, Literal
+from dataclasses import dataclass
+from typing import Optional, Union, Tuple, Literal
 import numpy as np
 
-from .orderbook import OrderBook, Order, Side
+from .orderbook import Order, OrderBook, Side
 
-CancelAction = Tuple[Literal["cancel"], int, Optional[int]]
-Action = Union[Order, CancelAction]
+Action = Union[None, Order, Tuple[Literal["cancel"], int]]
 
 
-class Agent:
+@dataclass
+class BaseAgent:
+    trader_id: int
+    rng: np.random.Generator
+    _next_order_id: int = 1
+
+    def new_oid(self) -> int:
+        oid = self._next_order_id
+        self._next_order_id += 1
+        # make ids globally unique-ish by namespacing with trader_id
+        return int(self.trader_id * 1_000_000 + oid)
+
+    def act(self, t: int, book: OrderBook) -> Action:
+        return None
+
+
+class NoiseTrader(BaseAgent):
     """
-    Base agent. Teammates implement step().
+    Minimal placeholder:
+    - 50/50 buy/sell
+    - alternates between market and limit randomly
     """
-    def __init__(self, agent_id: int, rng: np.random.Generator):
-        self.agent_id = agent_id
-        self.rng = rng
-        self.new_order_id = None  # injected by simulator
 
-    def step(self, t: int, book: OrderBook) -> List[Action]:
-        return []
-
-
-class NoiseTrader(Agent):
-    """
-    Placeholder:
-      - small market orders, random direction
-    """
-    def __init__(self, agent_id: int, rng: np.random.Generator, p_act: float = 0.3, max_qty: int = 5):
-        super().__init__(agent_id, rng)
-        self.p_act = p_act
-        self.max_qty = max_qty
-
-    def step(self, t: int, book: OrderBook) -> List[Action]:
-        if self.rng.random() > self.p_act:
-            return []
+    def act(self, t: int, book: OrderBook) -> Action:
         side: Side = "buy" if self.rng.random() < 0.5 else "sell"
-        qty = int(self.rng.integers(1, self.max_qty + 1))
-        oid = self.new_order_id()
-        return [Order(order_id=oid, trader_id=self.agent_id, side=side, qty=qty, price=None, ts=t)]
+        qty = int(self.rng.integers(1, 5))
 
+        if self.rng.random() < 0.5:
+            # market
+            return Order(self.new_oid(), self.trader_id, side, qty, price=None, ts=t)
 
-class MarketMaker(Agent):
-    """
-    Placeholder:
-      - posts 1+ levels on both sides near best bid/ask
-    """
-    def __init__(self, agent_id: int, rng: np.random.Generator, quote_size: int = 5, levels: int = 1):
-        super().__init__(agent_id, rng)
-        self.quote_size = quote_size
-        self.levels = levels
-
-    def step(self, t: int, book: OrderBook) -> List[Action]:
+        # limit: place at current best (degenerate but fine for testing plumbing)
         bb, ba = book.best_bid(), book.best_ask()
-        if not np.isfinite(ba) or bb <= 0:
-            return []
-
-        acts: List[Action] = []
-        for k in range(self.levels):
-            bid_px = book.snap(bb - k * book.tick)
-            ask_px = book.snap(ba + k * book.tick)
-            acts.append(Order(self.new_order_id(), self.agent_id, "buy", self.quote_size, price=bid_px, ts=t))
-            acts.append(Order(self.new_order_id(), self.agent_id, "sell", self.quote_size, price=ask_px, ts=t))
-        return acts
-
-
-class Institutional(Agent):
-    """
-    Placeholder iceberg parent order.
-    NOTE: this submits iceberg slices; trade attribution can be added later.
-    """
-    def __init__(
-        self,
-        agent_id: int,
-        rng: np.random.Generator,
-        side: Side = "buy",
-        parent_qty: int = 500,
-        display_qty: int = 10,
-        refresh_size: int = 10,
-    ):
-        super().__init__(agent_id, rng)
-        self.side = side
-        self.remaining = parent_qty
-        self.display_qty = display_qty
-        self.refresh_size = refresh_size
-
-    def step(self, t: int, book: OrderBook) -> List[Action]:
-        if self.remaining <= 0:
-            return []
-
-        bb, ba = book.best_bid(), book.best_ask()
-        if not np.isfinite(ba) or bb <= 0:
-            return []
-
-        if self.side == "buy":
-            px = book.snap(bb)
-            px = min(px, book.snap(ba - book.tick))  # never cross
+        if side == "buy":
+            px = bb if bb > 0 else 100.0
         else:
-            px = book.snap(ba)
-            px = max(px, book.snap(bb + book.tick))
+            px = ba if np.isfinite(ba) else 101.0
 
-        visible = min(self.display_qty, self.remaining)
-        hidden = max(0, self.remaining - visible)
+        return Order(self.new_oid(), self.trader_id, side, qty, price=float(px), ts=t)
 
-        oid = self.new_order_id()
-        o = Order(
-            order_id=oid,
-            trader_id=self.agent_id,
-            side=self.side,
-            qty=visible,
-            price=px,
-            ts=t,
-            display_qty=self.display_qty,
-            hidden_qty=hidden,
-            refresh_size=self.refresh_size,
-        )
 
-        # Placeholder: decrement parent on submission.
-        # Later: decrement using executed trades attributed to this agent’s child order_ids.
-        self.remaining -= visible
+class MarketMaker(BaseAgent):
+    """
+    Minimal placeholder:
+    - posts one bid and one ask at the current bests (degenerate, but exercises add_limit)
+    - occasionally cancels a random existing order from the book
+    """
 
-        return [o]
+    def act(self, t: int, book: OrderBook) -> Action:
+        r = self.rng.random()
+
+        side: Side = "buy" if r < 0.55 else "sell"
+        qty = int(self.rng.integers(1, 10))
+        bb, ba = book.best_bid(), book.best_ask()
+
+        px = bb if side == "buy" else ba
+        if side == "buy" and bb <= 0:
+            px = 100.0
+        if side == "sell" and not np.isfinite(ba):
+            px = 101.0
+
+        return Order(self.new_oid(), self.trader_id, side, qty, price=float(px), ts=t)
+
+
+class InstitutionalTrader(BaseAgent):
+    """
+    Minimal placeholder:
+    - rarely acts
+    - when acts, sends a larger market order (exercises matching)
+    """
+
+    def act(self, t: int, book: OrderBook) -> Action:
+        if self.rng.random() > 0.05:
+            return None
+
+        side: Side = "buy" if self.rng.random() < 0.5 else "sell"
+        qty = int(self.rng.integers(10, 50))
+        return Order(self.new_oid(), self.trader_id, side, qty, price=None, ts=t)
