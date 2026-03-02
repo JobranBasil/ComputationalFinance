@@ -26,26 +26,54 @@ class BaseAgent:
 
 
 class NoiseTrader(BaseAgent):
-    """
-    Minimal placeholder:
-    - 50/50 buy/sell
-    - alternates between market and limit randomly
-    """
+    def __init__(
+        self,
+        trader_id: int,
+        rng: np.random.Generator,
+        participation_rate: float = 0.3,
+        market_prob: float = 0.3,
+        sign_persistence: float = 0.7,
+        max_depth_ticks: int = 3,
+    ):
+        super().__init__(trader_id, rng)
+        self.participation_rate = participation_rate
+        self.market_prob = market_prob
+        self.sign_persistence = sign_persistence
+        self.max_depth_ticks = max_depth_ticks
+        self.last_side: Optional[Side] = None
 
-    def act(self, t: int, book: OrderBook) -> Action:
-        side: Side = "buy" if self.rng.random() < 0.5 else "sell"
+    def act(self, t: int, book: OrderBook):
+
+        # participation decision
+        if self.rng.random() > self.participation_rate:
+            return None
+
+        # persistent order sign
+        if self.last_side is None or self.rng.random() > self.sign_persistence:
+            side: Side = "buy" if self.rng.random() < 0.5 else "sell"
+        else:
+            side = self.last_side
+
+        self.last_side = side
+
         qty = int(self.rng.integers(1, 5))
 
-        if self.rng.random() < 0.5:
-            # market
+        # market order
+        if self.rng.random() < self.market_prob:
             return Order(self.new_oid(), self.trader_id, side, qty, price=None, ts=t)
 
-        # limit: place at current best (degenerate but fine for testing plumbing)
-        bb, ba = book.best_bid(), book.best_ask()
+        # limit order around mid
+        mid = book.mid_price()
+        if not np.isfinite(mid):
+            mid = 100.0
+
+        tick = book.tick
+        offset_ticks = int(self.rng.integers(0, self.max_depth_ticks + 1))
+
         if side == "buy":
-            px = bb if bb > 0 else 100.0
+            px = mid - offset_ticks * tick
         else:
-            px = ba if np.isfinite(ba) else 101.0
+            px = mid + offset_ticks * tick
 
         return Order(self.new_oid(), self.trader_id, side, qty, price=float(px), ts=t)
 
