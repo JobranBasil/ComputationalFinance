@@ -8,12 +8,33 @@ from .orderbook import Order, OrderBook, Side
 
 Action = Union[None, Order, Tuple[Literal["cancel"], int]]
 
+# -------------------- NEW: Iceberg state (strategy-only) --------------------
+@dataclass
+class IcebergOrder:
+    """
+    Strategy-only iceberg:
+    - 'remaining' is the hidden quantity left to execute (not shown in the book)
+    - each visible slice is a normal LIMIT order with size=min(peak, remaining)
+    - we consider a slice 'filled' when its order_id disappears from book.order_index
+      (simple + minimal; does not require OrderBook edits)
+    """
+    side: Side
+    remaining: int
+    peak: int
+    price: float
 
+    active_order_id: Optional[int] = None
+    active_slice_qty: int = 0  # the qty of the currently posted slice
+
+@dataclass
 @dataclass
 class BaseAgent:
     trader_id: int
     rng: np.random.Generator
     _next_order_id: int = 1
+
+    # NEW: optional iceberg currently being executed by this agent
+    iceberg: Optional[IcebergOrder] = None
 
     def new_oid(self) -> int:
         oid = self._next_order_id
@@ -22,6 +43,67 @@ class BaseAgent:
         return int(self.trader_id * 1_000_000 + oid)
 
     def act(self, t: int, book: OrderBook) -> Action:
+        return None
+
+    # -------------------- NEW: iceberg helpers on BaseAgent --------------------
+    def iceberg_start(self, side: Side, total_qty: int, peak: int, price: float) -> None:
+        """
+        Start a new iceberg parent order for this agent.
+        The visible orders are standard LIMIT orders posted at 'price'.
+        """
+        self.iceberg = IcebergOrder(
+            side=side,
+            remaining=int(total_qty),
+            peak=int(max(1, peak)),
+            price=float(price),
+            active_order_id=None,
+            active_slice_qty=0,
+        )
+
+    def iceberg_step(self, t: int, book: OrderBook) -> Action:
+        """
+        Advance iceberg execution by at most ONE action this step:
+        - If an active slice exists and is still in the book -> do nothing
+        - If the active slice disappeared -> treat as filled and post the next slice
+        - Repeat until remaining == 0, then clear iceberg
+
+        IMPORTANT: This keeps everything minimal and only depends on book.order_index.
+        """
+        if self.iceberg is None:
+            return None
+
+        ice = self.iceberg
+
+        # 1) If we have an active slice, check if it's still present in the book
+        if ice.active_order_id is not None:
+            if ice.active_order_id in book.order_index:
+                # Still resting (not fully filled yet) -> no new action
+                return None
+            else:
+                # Slice disappeared -> assume it got filled (or removed). Continue.
+                ice.active_order_id = None
+                ice.active_slice_qty = 0
+
+        # 2) If no active slice and we still have remaining, post next slice
+        if ice.remaining > 0:
+            slice_qty = int(min(ice.peak, ice.remaining))
+            oid = self.new_oid()
+
+            ice.remaining -= slice_qty
+            ice.active_order_id = oid
+            ice.active_slice_qty = slice_qty
+
+            return Order(
+                oid,
+                self.trader_id,
+                ice.side,
+                slice_qty,
+                price=float(ice.price),
+                ts=t,
+            )
+
+        # 3) Done: nothing remaining and no active slice
+        self.iceberg = None
         return None
 
 
