@@ -218,7 +218,10 @@ class OrderBook:
                 px = self.bid_prices[-1]
                 maker_q = self.bids[px]
 
+            
             maker = maker_q[0]
+            #print(f'maker is {maker}')
+            #print(f'taker is {taker}')
             fill = min(taker.qty, maker.qty)
 
             trades.append(
@@ -231,6 +234,7 @@ class OrderBook:
                     taker_order_id=taker.order_id,
                 )
             )
+            #print(f'trade is {Trade(ts=taker.ts,price=px,qty=fill,aggressor_side=taker.side,maker_order_id=maker.order_id,taker_order_id=taker.order_id)}')
 
             taker.qty -= fill
             maker.qty -= fill

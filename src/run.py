@@ -58,7 +58,7 @@ def main():
         InstitutionalTrader(trader_id=3, rng=np.random.default_rng(3)),
     ]
 
-    steps = 20_000
+    steps = 200
 
     logs = {
         "t": [],
@@ -82,12 +82,17 @@ def main():
         # simple sequential activation
         for a in agents:
             action = a.act(t, book)
+            print(action)
             ntr = apply_action(book, action, t)
             if action is not None:
                 last_actor = a.__class__.__name__
             trades_this_t += ntr
+            #print(trades_this_t)
 
         bb, ba = book.best_bid(), book.best_ask()
+        best_bid_qty = sum(o.qty for o in book.bids.get(bb, [])) if bb > 0 else 0
+        best_ask_qty = sum(o.qty for o in book.asks.get(ba, [])) if np.isfinite(ba) else 0
+        #print("best_bid_qty", best_bid_qty, "best_ask_qty", best_ask_qty)
         sp = book.spread()
         md = book.mid_price()
 
@@ -102,10 +107,9 @@ def main():
         logs["AskLvls"].append(len(book.ask_prices))
         logs["LastActor"].append(last_actor)
 
-        if t % 1000 == 0:
+        if t % 50 == 0:
             print(f"t={t}, bb={bb:.4f}, ba={ba:.4f}, spread={sp:.4f}")
 
-        if t % 1000 == 0:
             snapshots.append({
                 "t": t,
                 "bids": book.top_n_levels("buy", 10),

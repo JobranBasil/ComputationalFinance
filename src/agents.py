@@ -40,12 +40,19 @@ class NoiseTrader(BaseAgent):
             # market
             return Order(self.new_oid(), self.trader_id, side, qty, price=None, ts=t)
 
-        # limit: place at current best (degenerate but fine for testing plumbing)
+        # limit: place ONE TICK away from current best (so we don't pin the best)
         bb, ba = book.best_bid(), book.best_ask()
+
         if side == "buy":
-            px = bb if bb > 0 else 100.0
+            if bb > 0:
+                px = bb - book.tick
+            else:
+                px = 100.0 - book.tick
         else:
-            px = ba if np.isfinite(ba) else 101.0
+            if np.isfinite(ba):
+                px = ba + book.tick
+            else:
+                px = 101.0 + book.tick
 
         return Order(self.new_oid(), self.trader_id, side, qty, price=float(px), ts=t)
 
@@ -53,25 +60,21 @@ class NoiseTrader(BaseAgent):
 class MarketMaker(BaseAgent):
     """
     Minimal placeholder:
-    - posts one bid and one ask at the current bests (degenerate, but exercises add_limit)
-    - occasionally cancels a random existing order from the book
+    - posts one limit order each step
+    - quotes ONE TICK away from best to avoid infinite stacking at best
     """
 
     def act(self, t: int, book: OrderBook) -> Action:
-        r = self.rng.random()
-
-        side: Side = "buy" if r < 0.55 else "sell"
+        side: Side = "buy" if self.rng.random() < 0.5 else "sell"
         qty = int(self.rng.integers(1, 10))
         bb, ba = book.best_bid(), book.best_ask()
 
-        px = bb if side == "buy" else ba
-        if side == "buy" and bb <= 0:
-            px = 100.0
-        if side == "sell" and not np.isfinite(ba):
-            px = 101.0
+        if side == "buy":
+            px = (bb - book.tick) if bb > 0 else (100.0 - book.tick)
+        else:
+            px = (ba + book.tick) if np.isfinite(ba) else (101.0 + book.tick)
 
         return Order(self.new_oid(), self.trader_id, side, qty, price=float(px), ts=t)
-
 
 class InstitutionalTrader(BaseAgent):
     """
