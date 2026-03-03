@@ -27,7 +27,6 @@ class IcebergOrder:
     active_slice_qty: int = 0  # the qty of the currently posted slice
 
 @dataclass
-@dataclass
 class BaseAgent:
     trader_id: int
     rng: np.random.Generator
