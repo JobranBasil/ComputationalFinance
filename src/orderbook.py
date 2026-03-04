@@ -5,6 +5,9 @@ from collections import deque
 from typing import Deque, Dict, List, Optional, Tuple, Literal
 
 import numpy as np
+import matplotlib.pyplot as plt
+
+plt.style.use('ggplot')
 
 Side = Literal["buy", "sell"]
 
@@ -114,6 +117,40 @@ class OrderBook:
                 del self.asks[p]
             self.ask_prices = self.ask_prices[:self.max_depth_levels]
 
+    def book_imbalance(self):
+        """
+        return orderbook Imbalance [sum(bids) - sum(asks)]
+        """
+
+        out: List[Tuple[float, int]] = []
+
+        bprices = list(reversed(self.bid_prices))
+        bid_book = self.bids
+        aprices = self.ask_prices
+        ask_book = self.asks
+        bids_q = 0
+        asks_q = 0
+
+        for p in bprices:
+            total = sum(o.qty for o in bid_book[p])
+            bids_q += total
+        print(f'total bids volume : {bids_q}')
+        
+        for p in aprices:
+            total = sum(o.qty for o in ask_book[p])
+            asks_q += total
+        print(f'total asks volume : {asks_q}')
+
+        imb = bids_q - asks_q
+        print(f'current RAW Orderbook Imbalance : {imb}')
+
+        denom = bids_q + asks_q
+
+        norm_imb = float((imb) / denom) if denom > 0 else 0.0
+        print(f'current NORM Orderbook Imbalance : {norm_imb}')
+
+        return norm_imb
+
     # ---------- depth ----------
 
     def top_n_levels(self, side: Side, n: int) -> List[Tuple[float, int]]:
@@ -139,6 +176,9 @@ class OrderBook:
     def add_limit(self, order: Order) -> List[Trade]:
         assert order.price is not None, "Limit order must have a price"
         trades = self._match(order)
+        # sanity check: do not allow crossed book
+        if self.best_bid() >= self.best_ask():
+            raise RuntimeError("Crossed book detected after limit order")
 
         if order.qty > 0:
             self._add_price_level(order.side, order.price)
@@ -168,60 +208,38 @@ class OrderBook:
         assert order.price is None, "Market order must have price=None"
         return self._match(order)
 
-    def cancel(self, order_id: int, cancel_qty: Optional[int] = None) -> bool:
-        """
-        Cancel by id. If cancel_qty is None -> cancel full remaining.
-        """
-        if order_id not in self.order_index:
-            return False
-
-        side, price = self.order_index[order_id]
-        book = self.bids if side == "buy" else self.asks
-        q = book.get(price)
-        if q is None:
-            return False
-
-        for o in list(q):
-            if o.order_id == order_id:
-                if cancel_qty is None or cancel_qty >= o.qty:
-                    q.remove(o)
-                    del self.order_index[order_id]
-                else:
-                    o.qty -= cancel_qty
-                self._remove_price_level_if_empty(side, price)
-                return True
-
-        return False
-
     # ---------- matching ----------
 
     def _match(self, taker: Order) -> List[Trade]:
         trades: List[Trade] = []
 
         def can_cross() -> bool:
+            # opposite book empty?
             if taker.side == "buy":
                 if not self.ask_prices:
                     return False
-                best = self.ask_prices[0]
-                return (taker.price is None) or (taker.price >= best)
+                best_ask = self.ask_prices[0]
+                return (taker.price is None) or (taker.price >= best_ask)
             else:
                 if not self.bid_prices:
                     return False
-                best = self.bid_prices[-1]
-                return (taker.price is None) or (taker.price <= best)
+                best_bid = self.bid_prices[-1]
+                return (taker.price is None) or (taker.price <= best_bid)
 
         while taker.qty > 0 and can_cross():
             if taker.side == "buy":
                 px = self.ask_prices[0]
                 maker_q = self.asks[px]
+                #print(f'asks : {maker_q}')
             else:
                 px = self.bid_prices[-1]
                 maker_q = self.bids[px]
+                #print(f'bids : {maker_q}')
 
-            
+
             maker = maker_q[0]
-            #print(f'maker is {maker}')
-            #print(f'taker is {taker}')
+            print(f'maker is {maker}')
+            print(f'taker is {taker}')
             fill = min(taker.qty, maker.qty)
 
             trades.append(
@@ -234,7 +252,7 @@ class OrderBook:
                     taker_order_id=taker.order_id,
                 )
             )
-            #print(f'trade is {Trade(ts=taker.ts,price=px,qty=fill,aggressor_side=taker.side,maker_order_id=maker.order_id,taker_order_id=taker.order_id)}')
+            print(f'trade is {Trade(ts=taker.ts,price=px,qty=fill,aggressor_side=taker.side,maker_order_id=maker.order_id,taker_order_id=taker.order_id)}')
 
             taker.qty -= fill
             maker.qty -= fill
@@ -250,3 +268,4 @@ class OrderBook:
                 self._remove_price_level_if_empty("buy", px)
 
         return trades
+    
