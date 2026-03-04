@@ -59,7 +59,7 @@ def main():
         #MarketMakerAS(trader_id=4, rng=np.random.default_rng(4))
     ]
 
-    steps = 101
+    steps = 51
 
     logs = {
         "t": [],
@@ -82,7 +82,7 @@ def main():
         last_actor = None
 
         # simple sequential activation
-        print(f"ACTION STEP : {t}")
+        print(f"TIME STEP : {t}")
         for a in agents:
             action = a.act(t, book)
             print(action)
