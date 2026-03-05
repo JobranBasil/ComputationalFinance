@@ -60,20 +60,26 @@ class OrderBook:
     # ---------- best quotes ----------
 
     def best_bid(self) -> float:
-        return self.bid_prices[-1] if self.bid_prices else 0.0
+        return self.bid_prices[-1] if self.bid_prices else float("-inf")
 
     def best_ask(self) -> float:
         return self.ask_prices[0] if self.ask_prices else float("inf")
 
     def spread(self) -> float:
         bb, ba = self.best_bid(), self.best_ask()
-        return (ba - bb) if (bb > 0 and np.isfinite(ba)) else np.nan
-
+        if bb is None or ba is None or not np.isfinite(bb) or not np.isfinite(ba):
+            spread = np.nan
+        else:
+            spread = ba - bb
+        return spread
+    
     def mid_price(self) -> float:
         bb, ba = self.best_bid(), self.best_ask()
         return 0.5 * (bb + ba) if (bb > 0 and np.isfinite(ba)) else np.nan
 
     # ---------- helpers ----------
+    def _snap(self, px: float) -> float:
+        return round(px / self.tick) * self.tick
 
     def _add_price_level(self, side: Side, price: float) -> None:
         if side == "buy":
@@ -175,6 +181,7 @@ class OrderBook:
 
     def add_limit(self, order: Order) -> List[Trade]:
         assert order.price is not None, "Limit order must have a price"
+        order.price = float(self._snap(order.price))
         trades = self._match(order)
         # sanity check: do not allow crossed book
         if self.best_bid() >= self.best_ask():
@@ -194,6 +201,7 @@ class OrderBook:
 
     def add_limit_post_only(self, order: Order) -> None:
         assert order.price is not None
+        order.price = float(self._snap(order.price))
         self._add_price_level(order.side, order.price)
 
         if order.side == "buy":

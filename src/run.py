@@ -59,7 +59,7 @@ def main():
         #MarketMakerAS(trader_id=4, rng=np.random.default_rng(4))
     ]
 
-    steps = 51
+    steps = 2001
 
     logs = {
         "t": [],
@@ -117,7 +117,7 @@ def main():
         logs["LastActor"].append(last_actor)
         logs["OBI"].append(obi)
 
-        if t % 5 == 0:
+        if t % 50 == 0:
             print(f"t={t}, bb={bb:.4f}, ba={ba:.4f}, spread={sp:.4f}, Norm obi={obi:.4f}")
 
             snapshots.append({
@@ -188,23 +188,23 @@ def main():
         plt.savefig(os.path.join(out_dir, "ABM_OrderBook_Snapshots.png"))
         plt.close()
 
-        #Create demand curve of the book, with cumulative quantity at each price level.
-        bid_prices = [p for p, q in bids]
-        bid_quantities = [sum(q for p, q in bids if p >= price) for price in bid_prices]
+    #Create demand curve of the book, with cumulative quantity at each price level.
+    bid_prices = [p for p, q in bids]
+    bid_quantities = [sum(q for p, q in bids if p >= price) for price in bid_prices]
 
-        ask_prices = [p for p, q in asks]
-        ask_quantities = [sum(q for p, q in asks if p <= price) for price in ask_prices]
+    ask_prices = [p for p, q in asks]
+    ask_quantities = [sum(q for p, q in asks if p <= price) for price in ask_prices]
 
-        # Piecewise constant (step) plots
-        plt.step(bid_quantities, bid_prices, where='post', color='blue', label='Bids')
-        plt.step(ask_quantities, ask_prices, where='post', color='red', label='Asks')
+    # Piecewise constant (step) plots
+    plt.step(bid_quantities, bid_prices, where='post', color='blue', label='Bids')
+    plt.step(ask_quantities, ask_prices, where='post', color='red', label='Asks')
 
-        plt.xlabel('Cumulative Quantity')
-        plt.ylabel('Price')
-        plt.title('Demand Curve')
-        plt.legend()
-        plt.savefig(os.path.join(out_dir, "demand_curve.png"))
-        plt.close()
+    plt.xlabel('Cumulative Quantity')
+    plt.ylabel('Price')
+    plt.title('Demand Curve')
+    plt.legend()
+    plt.savefig(os.path.join(out_dir, "demand_curve.png"))
+    plt.close()
 
 
     # Save logs
