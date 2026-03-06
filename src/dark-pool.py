@@ -57,6 +57,39 @@ class DarkPool:
         self.bid_prices: List[float] = []
         self.ask_prices: List[float] = []
 
+    def get_mid_price(self) -> float:
+        """
+        :return mid_price: mid price of the dark pool based on the lit order book.
+        """
+
+        if not self.lit_orderbook.bids or not self.lit_orderbook.asks:
+            # check that the lit order book has bids and asks and has been initialized before traders can submit orders
+            return np.nan
+
+        else:
+            # get the best bid and ask prices from the lit order book
+            best_bid = self.lit_orderbook.best_bid()
+            best_ask = self.lit_orderbook.best_ask()
+
+            if best_bid is None or best_ask is None:
+                # check that the best bid and ask are not None in the lit order book
+                return np.nan
+
+            if best_bid <= 0 or best_ask <= 0:
+                # check that the best bid and ask are positive values.
+                return np.nan
+
+            if best_bid >= best_ask:
+                # TODO: check if we want to return none or the best bid in the case of a cross market.
+                return np.nan
+
+            if best_bid == best_ask:
+                # check for a locked market.
+                return best_bid
+
+            # If all checks pass, return the mid price
+            return (best_bid + best_ask) / 2
+
 
     def submit_order(self, order: Order) -> List[Trade]:
         # TODO: complete
@@ -68,6 +101,7 @@ class DarkPool:
         """
 
         if order.qty <= 0:
+            # TODO: check how errors are handled, raising errors or returning an empty list
             raise ValueError("Order quantity must be positive.")
 
         if order.order_id in self.bids or order.order_id in self.asks:
