@@ -9,7 +9,6 @@ from typing import Deque, Dict, List, Optional, Tuple, Literal
 import logging
 
 
-
 plt.style.use('ggplot')
 
 Side = Literal["buy", "sell"]
@@ -34,7 +33,6 @@ class Trade:
     timestamp: int
 
 
-
 class DarkPool:
     """
     Dark pool implementation for institutional traders.
@@ -57,7 +55,7 @@ class DarkPool:
         self.bid_prices: List[float] = []
         self.ask_prices: List[float] = []
 
-    def get_mid_price(self) -> float:
+    def get_mid_price(self) -> Optional[float]:
         """
         :return mid_price: mid price of the dark pool based on the lit order book.
         """
@@ -67,37 +65,33 @@ class DarkPool:
             # raise ValueError("Lit order book is empty. Traders cannot submit orders.")
             return np.nan
 
+        # get the best bid and ask prices from the lit order book
+        best_bid = self.lit_orderbook.best_bid()
+        best_ask = self.lit_orderbook.best_ask()
+
+        if any(
+           [
+               # check that the best bid and ask are not None in the lit order book
+               best_bid is None,
+               best_ask is None,
+
+               # check that the best bid and ask are positive values.
+               best_bid <= 0,
+               best_ask <= 0,
+
+               # check that the best bid and ask are finite values.
+               not np.isfinite(best_bid),
+               not np.isfinite(best_ask),
+
+               # TODO: check if we want to return none or the best bid in the case of a cross market.
+               best_bid >= best_ask
+            ]
+        ): return np.nan
+
+
         else:
-            # get the best bid and ask prices from the lit order book
-            best_bid = self.lit_orderbook.best_bid()
-            best_ask = self.lit_orderbook.best_ask()
-
-            if any(
-               [
-                   # check that the best bid and ask are not None in the lit order book
-                   best_bid is None,
-                   best_ask is None,
-
-                   # check that the best bid and ask are positive values.
-                   best_bid <= 0,
-                   best_ask <= 0,
-
-                   # check that the best bid and ask are finite values.
-                   not np.isfinite(best_bid),
-                   not np.isfinite(best_ask),
-
-                   # TODO: check if we want to return none or the best bid in the case of a cross market.
-                   best_bid >= best_ask
-                ]
-            ): return np.nan
-
-
-            if best_bid == best_ask:
-                # check for a locked market.
-                return best_bid
-            else:
-                # If all checks pass, return the mid price
-                return (best_bid + best_ask) / 2
+            # If all checks pass, return the mid price
+            return (best_bid + best_ask) / 2
 
 
     def submit_order(self, order: Order) -> List[Trade]:
@@ -130,7 +124,13 @@ class DarkPool:
         # log the order todo: log to a file not just print to the console
         print(f"--- ORDER SUBMISSION ---: trader: {order.trader_id}, order: {order.order_id}, side: {order.side}, qty: {order.qty}, timestamp: {order.ts}")
 
-        return trades
+    def cancel_order(self, order_id: int) -> bool:
+        pass
+
+    def has_order(self):
+        pass
+
+
 
 
 
