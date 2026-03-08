@@ -93,6 +93,7 @@ class BaseAgent:
             ice.active_order_id = oid
             ice.active_slice_qty = slice_qty
 
+            print('-------------------- ICEBERG SLICE --------------------------')
             return Order(
                 oid,
                 self.trader_id,
@@ -101,6 +102,7 @@ class BaseAgent:
                 price=float(ice.price),
                 ts=t,
             )
+            
 
         # 3) Done: nothing remaining and no active slice
         self.iceberg = None
@@ -279,16 +281,48 @@ class MarketMaker(BaseAgent):
 
 
 class InstitutionalTrader(BaseAgent):
-    """
-    Minimal placeholder:
-    - rarely acts
-    - when acts, sends a larger market order (exercises matching)
-    """
+    def __init__(self, trader_id: int, rng: np.random.Generator,
+                 participation_rate: float = 0.05,
+                 use_iceberg_prob: float = 0.8,
+                 peak_range=(3, 10),
+                 total_range=(20, 60),
+                 price_mode: str = "join"):  # "join" or "improve"
+        super().__init__(trader_id, rng)
+        self.participation_rate = participation_rate
+        self.use_iceberg_prob = use_iceberg_prob
+        self.peak_range = peak_range
+        self.total_range = total_range
+        self.price_mode = price_mode
 
     def act(self, t: int, book: OrderBook) -> Action:
-        if self.rng.random() > 0.05:
+        # 1) If currently executing iceberg, keep working it
+        if self.iceberg is not None:
+            return self.iceberg_step(t, book)
+
+        # 2) Decide whether to initiate a parent order
+        if self.rng.random() > self.participation_rate:
             return None
 
         side: Side = "buy" if self.rng.random() < 0.5 else "sell"
-        qty = int(self.rng.integers(10, 50))
-        return Order(self.new_oid(), self.trader_id, side, qty, price=None, ts=t)
+        total_qty = int(self.rng.integers(self.total_range[0], self.total_range[1] + 1))
+
+        # If you don't have quotes, just skip
+        bb, ba = book.best_bid(), book.best_ask()
+        if bb <= 0 or not np.isfinite(ba):
+            return None
+
+        peak = int(self.rng.integers(self.peak_range[0], self.peak_range[1] + 1))
+
+        # price selection (simple)
+        if side == "buy":
+            px = bb if self.price_mode == "join" else min(bb + book.tick, ba - book.tick)
+        else:
+            px = ba if self.price_mode == "join" else max(ba - book.tick, bb + book.tick)
+
+        # 3) Choose iceberg vs one-shot market
+        if self.rng.random() < self.use_iceberg_prob:
+            self.iceberg_start(side=side, total_qty=total_qty, peak=peak, price=px)
+            print('--------------------- ICEBERG PLACED --------------------------')
+            return self.iceberg_step(t, book)  # post first slice
+        else:
+            return Order(self.new_oid(), self.trader_id, side, total_qty, price=None, ts=t)
