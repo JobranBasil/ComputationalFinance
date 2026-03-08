@@ -8,10 +8,10 @@ from collections import deque
 from typing import Deque, Dict, List, Optional, Tuple, Literal
 import logging
 
-
 plt.style.use('ggplot')
 
 Side = Literal["buy", "sell"]
+
 
 @dataclass
 class Order:
@@ -22,8 +22,8 @@ class Order:
     qty: int
     ts: int = 0
 
-@dataclass
 
+@dataclass
 class Trade:
     # TODO: complete
     price: float
@@ -66,29 +66,29 @@ class DarkPool:
         best_ask = self.lit_orderbook.best_ask()
 
         if any(
-           [
-               # check that the best bid and ask are not None in the lit order book
-               best_bid is None,
-               best_ask is None,
+                [
+                    # check that the best bid and ask are not None in the lit order book
+                    best_bid is None,
+                    best_ask is None,
 
-               # check that the best bid and ask are positive values.
-               best_bid <= 0,
-               best_ask <= 0,
+                    # check that the best bid and ask are positive values.
+                    best_bid <= 0,
+                    best_ask <= 0,
 
-               # check that the best bid and ask are finite values.
-               not np.isfinite(best_bid),
-               not np.isfinite(best_ask),
+                    # check that the best bid and ask are finite values.
+                    not np.isfinite(best_bid),
+                    not np.isfinite(best_ask),
 
-               # TODO: check if we want to return none or the best bid in the case of a cross market.
-               best_bid >= best_ask
-            ]
-        ): return np.nan
+                    # TODO: check if we want to return none or the best bid in the case of a cross market.
+                    best_bid >= best_ask
+                ]
+        ):
+            return np.nan
 
 
         else:
             # If all checks pass, return the mid price
             return (best_bid + best_ask) / 2
-
 
     def submit_order(self, order: Order) -> List[Trade]:
         # TODO: complete
@@ -113,8 +113,8 @@ class DarkPool:
         else:
             self.asks.append(order)
 
-
-        logging.info(f"--- ORDER SUBMISSION ---: trader: {order.trader_id}, order: {order.order_id}, side: {order.side}, qty: {order.qty}, timestamp: {order.ts}")
+        logging.info(
+            f"--- ORDER SUBMISSION ---: trader: {order.trader_id}, order: {order.order_id}, side: {order.side}, qty: {order.qty}, timestamp: {order.ts}")
 
         mid_price = self.get_mid_price()
 
@@ -123,15 +123,39 @@ class DarkPool:
             logging.warning("Mid price is not available. Order submitted but cannot be executed.")
             return trades
 
+        # TODO: check logic of order matching
 
-        # TODO: implement matching logic (price discovery via lit order book, then match orders in the dark pool)
+        while self.bids and self.asks:
+            # get the best bid and ask prices from the lit order book
+            bid = self.bids.popleft()
+            ask = self.asks.pop()
 
+            # determine the trade quantity based on the available quantity in the dark pool
+            trade_qty = min(bid.qty, ask.qty)
 
+            # check if the trade quantity is positive
+            if trade_qty < 0:
+                raise ValueError("Trade quantity must be positive.")
 
+            # create a trade object
+            trade = Trade(mid_price, trade_qty, bid.trader_id, ask.trader_id, order.ts)
 
+            # add the trade to the trade history
+            trades.append(trade)
 
+            # update the quantity in the dark pool
+            bid.qty -= trade_qty
+            ask.qty -= trade_qty
 
+            # check if the quantity in the dark pool becomes zero and add it back to the queue
+            if bid.qty == 0:
+                self.bids.appendleft(bid)
+            if ask.qty == 0:
+                self.asks.append(ask)
 
+            # if the trade quantity is zero, we cannot execute the trade and we should break the loop
+            if not self.bids and not self.asks:
+                break
 
         return trades
 
@@ -140,11 +164,3 @@ class DarkPool:
 
     def has_order(self):
         pass
-
-
-
-
-
-
-
-
