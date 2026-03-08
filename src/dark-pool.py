@@ -64,6 +64,7 @@ class DarkPool:
 
         if not self.lit_orderbook.bids or not self.lit_orderbook.asks:
             # check that the lit order book has bids and asks and has been initialized before traders can submit orders
+            # raise ValueError("Lit order book is empty. Traders cannot submit orders.")
             return np.nan
 
         else:
@@ -71,24 +72,32 @@ class DarkPool:
             best_bid = self.lit_orderbook.best_bid()
             best_ask = self.lit_orderbook.best_ask()
 
-            if best_bid is None or best_ask is None:
-                # check that the best bid and ask are not None in the lit order book
-                return np.nan
+            if any(
+               [
+                   # check that the best bid and ask are not None in the lit order book
+                   best_bid is None,
+                   best_ask is None,
 
-            if best_bid <= 0 or best_ask <= 0:
-                # check that the best bid and ask are positive values.
-                return np.nan
+                   # check that the best bid and ask are positive values.
+                   best_bid <= 0,
+                   best_ask <= 0,
 
-            if best_bid >= best_ask:
-                # TODO: check if we want to return none or the best bid in the case of a cross market.
-                return np.nan
+                   # check that the best bid and ask are finite values.
+                   not np.isfinite(best_bid),
+                   not np.isfinite(best_ask),
+
+                   # TODO: check if we want to return none or the best bid in the case of a cross market.
+                   best_bid >= best_ask
+                ]
+            ): return np.nan
+
 
             if best_bid == best_ask:
                 # check for a locked market.
                 return best_bid
-
-            # If all checks pass, return the mid price
-            return (best_bid + best_ask) / 2
+            else:
+                # If all checks pass, return the mid price
+                return (best_bid + best_ask) / 2
 
 
     def submit_order(self, order: Order) -> List[Trade]:
@@ -115,13 +124,10 @@ class DarkPool:
         else:
             self.asks[order.order_id] = order
 
-        # match orders in the dark pool
         # TODO: implement matching logic (price discovery via lit order book, then match orders in the dark pool)
-        trades = []
-        # trades = self.match_orders()
 
-        # log the order
-        # logging.info(f"--- ORDER SUBMISSION ---: trader: {order.trader_id}, order: {order.order_id}, side: {order.side}, qty: {order.qty}, timestamp: {order.ts}")
+
+        # log the order todo: log to a file not just print to the console
         print(f"--- ORDER SUBMISSION ---: trader: {order.trader_id}, order: {order.order_id}, side: {order.side}, qty: {order.qty}, timestamp: {order.ts}")
 
         return trades

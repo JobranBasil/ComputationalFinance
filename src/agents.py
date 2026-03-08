@@ -290,5 +290,7 @@ class InstitutionalTrader(BaseAgent):
             return None
 
         side: Side = "buy" if self.rng.random() < 0.5 else "sell"
+
+        # TODO: update min and max order quantities to match real life values
         qty = int(self.rng.integers(10, 50))
         return Order(self.new_oid(), self.trader_id, side, qty, price=None, ts=t)
