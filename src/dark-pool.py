@@ -48,12 +48,8 @@ class DarkPool:
         self.lit_orderbook = lit_orderbook
 
         # FIFO queues for bid and ask orders (we do not need to store the price level)
-        self.asks: Dict[float, Deque[Order]] = {}
-        self.bids: Dict[float, Deque[Order]] = {}
-
-        # Store the bid and ask prices
-        self.bid_prices: List[float] = []
-        self.ask_prices: List[float] = []
+        self.asks: Deque[Order] = deque()
+        self.bids: Deque[Order] = deque()
 
     def get_mid_price(self) -> float:
         """
@@ -103,26 +99,41 @@ class DarkPool:
         :return trades: List of trades executed by the dark pool.
         """
 
+        trades: List[Trade] = []
+
         if order.qty <= 0:
             # TODO: check how errors are handled, raising errors or returning an empty list
             raise ValueError("Order quantity must be positive.")
 
-        if order.order_id in self.bids or order.order_id in self.asks:
+        if any(o.order_id == order.order_id for o in self.bids) or any(o.order_id == order.order_id for o in self.asks):
             raise ValueError("Order ID already exists.")
 
-        if order.side not in ["buy", "sell"]:
-            raise ValueError("Order side must be 'buy (bid)' or 'sell (ask)'.")
-
         if order.side == "buy":
-            self.bids[order.order_id] = order
+            self.bids.append(order)
         else:
-            self.asks[order.order_id] = order
+            self.asks.append(order)
+
+
+        logging.info(f"--- ORDER SUBMISSION ---: trader: {order.trader_id}, order: {order.order_id}, side: {order.side}, qty: {order.qty}, timestamp: {order.ts}")
+
+        mid_price = self.get_mid_price()
+
+        if np.isnan(mid_price):
+            # If the mid price is not available, we cannot execute the order.
+            logging.warning("Mid price is not available. Order submitted but cannot be executed.")
+            return trades
+
 
         # TODO: implement matching logic (price discovery via lit order book, then match orders in the dark pool)
 
 
-        # log the order todo: log to a file not just print to the console
-        print(f"--- ORDER SUBMISSION ---: trader: {order.trader_id}, order: {order.order_id}, side: {order.side}, qty: {order.qty}, timestamp: {order.ts}")
+
+
+
+
+
+
+        return trades
 
     def cancel_order(self, order_id: int) -> bool:
         pass
