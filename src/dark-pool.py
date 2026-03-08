@@ -55,7 +55,7 @@ class DarkPool:
         self.bid_prices: List[float] = []
         self.ask_prices: List[float] = []
 
-    def get_mid_price(self) -> Optional[float]:
+    def get_mid_price(self) -> float:
         """
         :return mid_price: mid price of the dark pool based on the lit order book.
         """
