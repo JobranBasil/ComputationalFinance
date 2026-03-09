@@ -4,8 +4,12 @@ from dataclasses import dataclass
 from typing import Optional, Union, Tuple, Literal
 import numpy as np
 import math
+import sys
+import os
 
-from .orderbook import Order, OrderBook, Side, Trade
+sys.path.insert(0, os.path.dirname(__file__))
+
+from orderbook import Order, OrderBook, Side, Trade
 
 Action = Union[None, Order, Tuple[Literal["cancel"], int]]
 
@@ -166,13 +170,11 @@ class MarketMakerAS(BaseAgent):
     def __init__(self, 
                  trader_id: int,
                  rng: np.random.Generator,
+                 horizon: float, # Time horizon
+                 A: float, # Baseline arrival rate
                  kappa: float, # Order‐book liquidity parameter (κ)
                  gamma: float, # Inventory risk aversion (γ)
                  sigma: float, # Market volatility (σ)
-                 horizon: float, # Time horizon
-                 A: float, # Baseline arrival rate
-                 mid_price_threshold: float = 0.50,
-                 inventory_threshold: int = 2,
                  ):
         super().__init__(trader_id, rng)
         self.kappa = kappa
@@ -181,32 +183,52 @@ class MarketMakerAS(BaseAgent):
         self.T = horizon
         self.inventory = 0
         self.A = A
-        #If we want to track PnL, we can add a cash attribute and update it on trades
-        self.cash = 0.0
-        self.order_index: Dict[int, Tuple[Side, float]] = {}  # order_id -> (side, price)
-
-        # Thresholds
-        self.mid_price_threshold = mid_price_threshold
-        self.inventory_threshold = inventory_threshold
-    
+        self.last_bid_id = None
+        self.last_ask_id = None
+        self.ttl = 50  # number of ticks before cancellation
+        self.bid_age = 0
+        self.ask_age = 0
+   
     def update_inventory(self, trade: Trade):
         """Update inventory based on executed trade."""
-        if trade.aggressor_side == "buy":
-            self.inventory -= trade.qty  # sold to buyer, decrease inventory
-        else:
-            self.inventory += trade.qty  # bought from seller, increase inventory
-    
+        if trade.maker_trader_id == self.trader_id:
+            if trade.aggressor_side == "buy":
+                self.inventory -= trade.qty
+            else:
+                self.inventory += trade.qty
+        elif trade.taker_trader_id == self.trader_id:
+            if trade.aggressor_side == "buy":
+                self.inventory += trade.qty
+            else:
+                self.inventory -= trade.qty
+
     def optimal_spread(self, time_remaining: float) -> float:
         """Calculate optimal spread based on Avellaneda-Stoikov formula."""
         term1 = self.gamma * self.sigma**2 * time_remaining
         term2 = (2.0 / self.gamma) * math.log(1.0 + self.gamma / self.kappa)
         return term1 + term2
-    
-    def arrival_intensity(self, delta: float) -> float:
-        """Exponential arrival intensity for orders at distance δ."""
-        return self.A * math.exp(-self.kappa * delta)
-    
+
     def act(self, t: int, book: OrderBook) -> Action:
+        actions = []
+
+        # Cancel bid if too old
+        if self.last_bid_id is not None:
+            self.ask_age += 1
+            if self.bid_age >= self.ttl:
+                actions.append(("cancel", self.last_bid_id))
+                self.last_bid_id = None
+                self.bid_age = 0
+
+
+        # Cancel ask if too old
+        if self.last_ask_id is not None:
+            self.ask_age += 1
+            if self.ask_age >= self.ttl:
+                actions.append(("cancel", self.last_ask_id))
+                self.last_ask_id = None
+                self.ask_age = 0
+            
+
         # Calculate mid-price and optimal spread
         bb, ba = book.best_bid(), book.best_ask()
         if bb <= 0 or not np.isfinite(ba):
@@ -215,34 +237,37 @@ class MarketMakerAS(BaseAgent):
             mid_price = (bb + ba) / 2
         
         #Calculate reservation price and optimal quotes
-        time_remaining = self.T - t
+        time_remaining = max(0.0, 1.0 - t / self.T)
         rerserve_price = mid_price - self.inventory * self.gamma * self.sigma**2 * time_remaining
         optimal_spread = self.optimal_spread(time_remaining)
 
         bid_price = rerserve_price - optimal_spread / 2
         ask_price = rerserve_price + optimal_spread / 2
+        
+        # prevent extreme quotes by bounding within a reasonable range around mid
+        max_offset = 10 * book.tick
+        bid_price = max(bid_price, mid_price - max_offset)
+        ask_price = min(ask_price, mid_price + max_offset)
 
+        print(f"MarketMakerAS act: t={t}, inventory={self.inventory}, mid={mid_price:.2f}, bid_px={bid_price:.2f}, ask_px={ask_price:.2f}")
 
-        #Quote orders according to arrival_intensity or probability of getting filled
-        delta_bid = mid_price - bid_price
-        delta_ask = ask_price - mid_price
+        qty = 20
+        #Quote both sides every tick
+        post_bid = True
+        post_ask = True
+        if post_bid:
+            bid = Order(self.new_oid(), self.trader_id, "buy", qty, price=bid_price, ts=t)
+            actions.append(bid)
+            self.last_bid_id = bid.order_id
+            self.bid_age = 0
+    
+        if post_ask:
+            ask = Order(self.new_oid(), self.trader_id, "sell", qty, price=ask_price, ts=t)
+            actions.append(ask)
+            self.last_ask_id = ask.order_id
+            self.ask_age = 0
 
-        #Fill probability based on arrival intensity (dt = 1 for simplicity)
-        fill_prob_bid = self.arrival_intensity(delta_bid)
-        fill_prob_ask = self.arrival_intensity(delta_ask)
-
-        #Randomly decide to place/cancel orders based on fill probabilities
-        r = self.rng.random()
-        if r < fill_prob_bid: 
-            bid = Order(self.new_oid(), self.trader_id, "buy", qty=1, price=bid_price, ts=t)
-            self.update_inventory(bid)
-            return bid   
-        elif r < fill_prob_bid + fill_prob_ask: 
-            ask = Order(self.new_oid(), self.trader_id, "sell", qty=1, price=ask_price, ts=t)
-            self.update_inventory(ask)
-            return ask
-        else:  
-            return None
+        return actions if actions else None
 
 
 class MarketMaker(BaseAgent):
