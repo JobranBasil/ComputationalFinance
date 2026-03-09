@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from collections import deque
-from typing import Deque, Dict, List, Optional, Tuple, Literal
+from typing import Deque, List, Literal
 import logging
+from src.orderbook import Order as LitOrder
 
 plt.style.use('ggplot')
 
@@ -38,11 +38,18 @@ class DarkPool:
     Dark pool implementation for institutional traders.
     """
 
-    def __init__(self, lit_orderbook):
+    def __init__(self, lit_orderbook, max_resting_ticks: int = 10, routing_delay: int = 10):
         """
         Initialize the dark pool with empty order list and trade history.
-        """
 
+        :param lit_orderbook: reference to the lit OrderBook for price discovery.
+        :param max_resting_ticks: maximum number of timesteps an order can rest
+                                  in the dark pool before being routed to the
+                                  lit order book as a market order.
+        :param routing_delay: number of timesteps to wait before a stale order
+                              is actually submitted to the lit order book,
+                              mimicking real-world routing latency.
+        """
 
         # initialize the dark pool with a reference to the lit order book for price discovery only
         self.lit_orderbook = lit_orderbook
@@ -50,6 +57,19 @@ class DarkPool:
         # FIFO queues for bid and ask orders (we do not need to store the price level)
         self.asks: Deque[Order] = deque()
         self.bids: Deque[Order] = deque()
+
+        # public trade tape so that every executed trade is published here so all
+        # traders can observe dark-pool activity after the fact.
+        self.trade_tape: List[Trade] = []
+
+        # maximum number of timesteps an order may rest before expiry
+        self.max_resting_ticks: int = max_resting_ticks
+
+        # number of timesteps to delay before routing a stale order to the lit book
+        self.routing_delay: int = routing_delay
+
+        # orders pending lit-book routing: list of (execute_at_ts, LitOrder)
+        self.pending_lit_routes: List[tuple[int, LitOrder]] = []
 
     def get_mid_price(self) -> float:
         """
@@ -105,7 +125,11 @@ class DarkPool:
             # TODO: check how errors are handled, raising errors or returning an empty list
             raise ValueError("Order quantity must be positive.")
 
-        if any(o.order_id == order.order_id for o in self.bids) or any(o.order_id == order.order_id for o in self.asks):
+        if (
+            any(o.order_id == order.order_id for o in self.bids)
+            or any(o.order_id == order.order_id for o in self.asks)
+            or any(o.order_id == order.order_id for _, o in self.pending_lit_routes)
+        ):
             raise ValueError("Order ID already exists.")
 
         if order.side == "buy":
@@ -135,13 +159,22 @@ class DarkPool:
         Partially filled orders are placed back at the front of their respective queue
         so they retain time priority for the next matching round.
 
+        After matching, stale orders (those exceeding max_resting_ticks) are expired
+        and routed to the lit order book as market orders.
+
+        Every executed trade is published to self.trade_tape so that all traders
+        can observe dark-pool activity after the fact.
+
         :param mid_price: execution price (lit book mid).
         :param timestamp: timestamp attached to generated trades.
         :return trades: list of Trade objects produced by this matching round.
         """
 
-
         trades: List[Trade] = []
+
+        # submit any previously scheduled lit-book routes whose delay has elapsed
+        # todo: implement pending order processing logic
+        # self._process_pending_routes(timestamp)
 
         while self.bids and self.asks:
             # peek at the oldest bid and ask
@@ -165,6 +198,9 @@ class DarkPool:
             )
             trades.append(trade)
 
+            # publish the trade to the public tape
+            self.trade_tape.append(trade)
+
             # log the trade
             logging.info(
                 f"--- TRADE ---: buyer: {bid.trader_id}, seller: {ask.trader_id}, "
@@ -181,23 +217,28 @@ class DarkPool:
             if ask.qty == 0:
                 self.asks.popleft()
 
+        # expire stale orders that have been resting too long
+        self._expire_stale_orders(timestamp)
+
         return trades
 
     def cancel_order(self, order_id: int) -> bool:
         """
         :param order_id: the ID of the order to cancel.
-        :return:
+        :return: True if the order was found and cancelled, False otherwise.
         """
 
-
-        # TODO: implement
-        pass
+        for queue in (self.bids, self.asks):
+            for i, order in enumerate(queue):
+                if order.order_id == order_id:
+                    del queue[i]
+                    logging.info(f"--- ORDER CANCELLED ---: order_id: {order_id}")
+                    return True
+        return False
 
     def has_order(self) -> bool:
         """
-        :return: true (false) if there is (not) an order in the queue.
+        :return: True if there is at least one order in either queue, False otherwise.
         """
 
-
-        # TODO: implement
-        pass
+        return len(self.bids) > 0 or len(self.asks) > 0
