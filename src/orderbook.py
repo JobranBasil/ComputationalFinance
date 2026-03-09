@@ -30,6 +30,8 @@ class Trade:
     aggressor_side: Side
     maker_order_id: int
     taker_order_id: int
+    maker_trader_id: int
+    taker_trader_id: int
 
 
 class OrderBook:
@@ -258,6 +260,8 @@ class OrderBook:
                     aggressor_side=taker.side,
                     maker_order_id=maker.order_id,
                     taker_order_id=taker.order_id,
+                    maker_trader_id: int,
+                    taker_trader_id: int,
                 )
             )
             print(f'trade is {Trade(ts=taker.ts,price=px,qty=fill,aggressor_side=taker.side,maker_order_id=maker.order_id,taker_order_id=taker.order_id)}')
