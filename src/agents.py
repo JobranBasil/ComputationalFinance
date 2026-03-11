@@ -294,3 +294,34 @@ class InstitutionalTrader(BaseAgent):
         # TODO: update min and max order quantities to match real life values
         qty = int(self.rng.integers(10, 50))
         return Order(self.new_oid(), self.trader_id, side, qty, price=None, ts=t)
+
+    def act_dark(self, t: int, dark_pool) -> Optional[list]:
+        """
+        Submit a dark pool order if the participation check passes.
+
+        Uses the same participation rate and order sizing as act(), but submits
+        to the dark pool instead of the lit book. Returns the list of dark pool
+        trades produced by the submission, or None if the agent chose not to act.
+
+        :param t: current simulation timestep.
+        :param dark_pool: DarkPool instance to submit to.
+        :return: list of Trade objects from dark pool matching, or None.
+        """
+        import importlib
+        dp_mod = importlib.import_module("src.dark-pool")
+        DarkOrder = dp_mod.Order
+
+        if self.rng.random() > 0.05:
+            return None
+
+        side: Side = "buy" if self.rng.random() < 0.5 else "sell"
+        qty = int(self.rng.integers(10, 50))
+
+        order = DarkOrder(
+            order_id=self.new_oid(),
+            trader_id=self.trader_id,
+            side=side,
+            qty=qty,
+            ts=t,
+        )
+        return dark_pool.submit_order(order)
