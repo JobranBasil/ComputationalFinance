@@ -4,10 +4,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-sys.path.insert(0, os.path.dirname(__file__))
 
-from orderbook import OrderBook, Order
-from agents import NoiseTrader, MarketMaker, InstitutionalTrader, MarketMakerAS, Action
+from .orderbook import OrderBook, Order
+from .agents import NoiseTrader, MarketMaker, InstitutionalTrader, MarketMakerAS, Action
 
 
 def apply_action(book: OrderBook, action: Action, t: int) -> list:
