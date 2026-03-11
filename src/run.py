@@ -1,30 +1,38 @@
 import os
+import sys
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+
 from .orderbook import OrderBook, Order
-from .agents import NoiseTrader, MarketMaker, InstitutionalTrader, Action
+from .agents import NoiseTrader, MarketMaker, InstitutionalTrader, MarketMakerAS, Action
 
 
-def apply_action(book: OrderBook, action: Action, t: int) -> int:
+def apply_action(book: OrderBook, action: Action, t: int) -> list:
     """
     Applies an agent action to the order book.
-    Returns number of trades executed (for basic debugging).
+    Returns list of trades executed (for basic debugging).
     """
     if action is None:
-        return 0
+        return []
 
     if isinstance(action, tuple) and action[0] == "cancel":
         book.cancel(action[1])
-        return 0
+        return []
+
+    if isinstance(action, list):
+        trades = []
+        for a in action:
+            trades.extend(apply_action(book, a, t))
+        return trades
 
     if isinstance(action, Order):
         if action.price is None:
             trades = book.execute_market(action)
         else:
             trades = book.add_limit(action)
-        return len(trades)
+        return trades
 
     raise TypeError(f"Unknown action type: {type(action)}")
 
@@ -51,16 +59,17 @@ def main():
 
     book = OrderBook(tick=0.01, max_depth_levels=10)
     seed_initial_book(book, best_bid=100.05, best_ask=100.1, levels=5, rng=rng)
-
+    steps = 10000
     agents = [
         NoiseTrader(trader_id=1, rng=np.random.default_rng(1)),
+        NoiseTrader(trader_id=5, rng=np.random.default_rng(5)),
+        NoiseTrader(trader_id=6, rng=np.random.default_rng(6)),
         MarketMaker(trader_id=2, rng=np.random.default_rng(2)),
         InstitutionalTrader(trader_id=3, rng=np.random.default_rng(3)),
-        #MarketMakerAS(trader_id=4, rng=np.random.default_rng(4))
+        MarketMakerAS(trader_id=4, rng=np.random.default_rng(4), horizon=10000, A=1, kappa=10, gamma=0.1, sigma=0.05)
     ]
-
-    steps = 2001
-
+    inventory_changes = 0 #For debugging MarketMakerAS
+    
     logs = {
         "t": [],
         "BestBid": [],
@@ -89,8 +98,17 @@ def main():
             ntr = apply_action(book, action, t)
             if action is not None:
                 last_actor = a.__class__.__name__
-            trades_this_t += ntr
+            trades_this_t += len(ntr)
             #print(trades_this_t)
+        
+            # Notify MarketMakerAS of trades on its orders
+            mmAS_agent = next((agent for agent in agents if isinstance(agent, MarketMakerAS)), None)
+            for trade in ntr:
+                if trade.maker_trader_id == mmAS_agent.trader_id or trade.taker_trader_id == mmAS_agent.trader_id:
+                    mmAS_agent.update_inventory(trade)
+                    print(f'MarketMakerAS inventory updated to {mmAS_agent.inventory} after trade {trade}\n')
+                    inventory_changes += 1 #For debugging and to decide paramters
+                    break
 
         bb, ba = book.best_bid(), book.best_ask()
         print("spread", ba - bb, "bar_width", 0.002)
@@ -131,7 +149,8 @@ def main():
         ask_depths = book.top_n_levels(side='sell', n =10)
         print(f'bids : {bid_depths}')
         print(f'asks : {ask_depths}')
-
+        
+    print(f'Inventory changes for MMAS/Trades made: {inventory_changes}')
     df = pd.DataFrame(logs)
 
     # Plots (optional)
