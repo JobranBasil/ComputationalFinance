@@ -7,9 +7,7 @@ import math
 import sys
 import os
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-from orderbook import Order, OrderBook, Side, Trade
+from .orderbook import Order, OrderBook, Side, Trade
 
 Action = Union[None, Order, Tuple[Literal["cancel"], int]]
 
