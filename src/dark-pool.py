@@ -355,3 +355,20 @@ class DarkPool:
             raise ValueError("Negative queue depth detected.")
 
         return bid_qty, ask_qty
+
+    def tick(self, t: int) -> None:
+        """
+        Advance the dark pool clock by one simulation timestep.
+
+        Must be called by the simulation loop every tick, regardless of whether
+        any orders were submitted. This guarantees that:
+          - stale orders are expired on actual time ticks, not only when new
+            orders arrive via submit_order.
+          - pending lit-book routes whose routing delay has elapsed are executed.
+
+        :param t: current simulation timestep.
+        """
+
+        self._expire_stale_orders(t)
+        self._process_pending_routes(t)
+        logging.debug(f"--- (DARK POOL) TICK ---: t={t}, active_orders={len(self._order_index)}, pending_routes={len(self.pending_lit_routes)}")
