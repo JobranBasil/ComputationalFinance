@@ -6,6 +6,7 @@ import numpy as np
 import math
 import sys
 import os
+from .dark_pool import Order as DarkPoolOrder
 
 from .orderbook import Order, OrderBook, Side, Trade
 
@@ -361,9 +362,6 @@ class InstitutionalTrader(BaseAgent):
         :param dark_pool: DarkPool instance to submit to.
         :return: list of Trade objects from dark pool matching, or None.
         """
-        import importlib
-        dp_mod = importlib.import_module("src.dark-pool")
-        DarkOrder = dp_mod.Order
 
         if self.rng.random() > 0.05:
             return None
@@ -371,7 +369,7 @@ class InstitutionalTrader(BaseAgent):
         side: Side = "buy" if self.rng.random() < 0.5 else "sell"
         qty = int(self.rng.integers(10, 50))
 
-        order = DarkOrder(
+        order = DarkPoolOrder(
             order_id=self.new_oid(),
             trader_id=self.trader_id,
             side=side,
