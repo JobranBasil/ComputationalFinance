@@ -45,7 +45,7 @@ class OrderBook:
     - cancel() removes order by id (O(n) search at level)
     """
 
-    def __init__(self, tick: float = 0.01, max_depth_levels: int = 10):
+    def __init__(self, tick: float = 0.01, max_depth_levels: int = 20):
         self.tick = tick
         self.max_depth_levels = max_depth_levels
 
@@ -260,11 +260,12 @@ class OrderBook:
                     aggressor_side=taker.side,
                     maker_order_id=maker.order_id,
                     taker_order_id=taker.order_id,
-                    maker_trader_id: int,
-                    taker_trader_id: int,
+                    maker_trader_id=maker.trader_id,
+                    taker_trader_id=taker.trader_id,
                 )
             )
-            print(f'trade is {Trade(ts=taker.ts,price=px,qty=fill,aggressor_side=taker.side,maker_order_id=maker.order_id,taker_order_id=taker.order_id)}')
+            print(f'trade is {Trade(ts=taker.ts,price=px,qty=fill,aggressor_side=taker.side,maker_order_id=maker.order_id,taker_order_id=taker.order_id,maker_trader_id=maker.trader_id,
+                    taker_trader_id=taker.trader_id)}')
 
             taker.qty -= fill
             maker.qty -= fill
@@ -281,3 +282,27 @@ class OrderBook:
 
         return trades
     
+    def cancel(self, order_id: int, cancel_qty: Optional[int] = None) -> bool:
+        """
+        Cancel by id. If cancel_qty is None -> cancel full remaining.
+        """
+        if order_id not in self.order_index:
+            return False
+
+        side, price = self.order_index[order_id]
+        book = self.bids if side == "buy" else self.asks
+        q = book.get(price)
+        if q is None:
+            return False
+
+        for o in list(q):
+            if o.order_id == order_id:
+                if cancel_qty is None or cancel_qty >= o.qty:
+                    q.remove(o)
+                    del self.order_index[order_id]
+                else:
+                    o.qty -= cancel_qty
+                self._remove_price_level_if_empty(side, price)
+                return True
+
+        return False
