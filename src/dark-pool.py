@@ -62,7 +62,7 @@ class DarkPool:
         # orders pending lit-book routing: list of (execute_at_ts, LitOrder)
         self.pending_lit_routes: List[tuple[int, LitOrder]] = []
 
-        # Order lookup dict for linear time order lookup
+        # Order lookup dict for constant time order lookup
         self._order_index: Dict[int, Order] = {}
 
         # lazy-deletion set where cancelled order IDs skipped during matching/expiry
@@ -335,7 +335,19 @@ class DarkPool:
 
     def has_order(self) -> bool:
         """
+
         :return: True if there is at least one active (non-canceled) order in either queue, False otherwise.
         """
 
         return len(self._order_index) > 0
+
+    def queue_depth(self):
+        """
+        Function to return the current queue depth of the dark pool.
+        :return: bid_qty, ask_qty
+        """
+
+
+        bid_qty = sum(o.qty for o in self._order_index.values() if o.side == "buy")
+        ask_qty = sum(o.qty for o in self._order_index.values() if o.side == "sell")
+        return bid_qty, ask_qty
