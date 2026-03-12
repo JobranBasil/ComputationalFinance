@@ -167,7 +167,7 @@ class MarketMakerAS(BaseAgent):
     """
     Market maker with inventory risk adjusted spread (Avellaneda-Stoikov)
     """
-    def __init__(self, 
+    def __init__(self,
                  trader_id: int,
                  rng: np.random.Generator,
                  horizon: float, # Time horizon
@@ -188,7 +188,7 @@ class MarketMakerAS(BaseAgent):
         self.ttl = 50  # number of time steps before cancellation
         self.bid_age = 0
         self.ask_age = 0
-   
+
     def update_inventory(self, trade: Trade):
         """Update inventory based on executed trade."""
         if trade.maker_trader_id == self.trader_id:
@@ -227,7 +227,7 @@ class MarketMakerAS(BaseAgent):
                 actions.append(("cancel", self.last_ask_id))
                 self.last_ask_id = None
                 self.ask_age = 0
-            
+
 
         # Calculate mid-price and optimal spread
         bb, ba = book.best_bid(), book.best_ask()
@@ -235,7 +235,7 @@ class MarketMakerAS(BaseAgent):
             mid_price = 100.0  # default mid if no quotes
         else:
             mid_price = (bb + ba) / 2
-        
+
         #Calculate reservation price and optimal quotes
         time_remaining = max(0.0, 1.0 - t / self.T)
         rerserve_price = mid_price - self.inventory * self.gamma * self.sigma**2 * time_remaining
@@ -243,7 +243,7 @@ class MarketMakerAS(BaseAgent):
 
         bid_price = rerserve_price - optimal_spread / 2
         ask_price = rerserve_price + optimal_spread / 2
-        
+
         # prevent extreme quotes by bounding within a reasonable range around mid
         max_offset = 50 * book.tick
         bid_price = max(bid_price, mid_price - max_offset)
@@ -260,7 +260,7 @@ class MarketMakerAS(BaseAgent):
             actions.append(bid)
             self.last_bid_id = bid.order_id
             self.bid_age = 0
-    
+
         if post_ask:
             ask = Order(self.new_oid(), self.trader_id, "sell", qty, price=ask_price, ts=t)
             actions.append(ask)
@@ -280,7 +280,7 @@ class MarketMaker(BaseAgent):
     def act(self, t: int, book: OrderBook) -> Action:
         #if self.rng.random() > 0.9:
             #return None
-        
+
         r = self.rng.random()
 
         side: Side = "buy" if r < 0.55 else "sell"
@@ -367,8 +367,7 @@ class InstitutionalTrader(BaseAgent):
             return None
 
         side: Side = "buy" if self.rng.random() < 0.5 else "sell"
-        qty = int(self.rng.integers(10, 50))
-
+        qty = int(self.rng.integers(self.total_range[0], self.total_range[1] + 1))
         order = DarkPoolOrder(
             order_id=self.new_oid(),
             trader_id=self.trader_id,
