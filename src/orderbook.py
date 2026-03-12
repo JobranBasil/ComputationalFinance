@@ -128,8 +128,6 @@ class OrderBook:
         return orderbook Imbalance [sum(bids) - sum(asks)]
         """
 
-        out: List[Tuple[float, int]] = []
-
         bprices = list(reversed(self.bid_prices))
         bid_book = self.bids
         aprices = self.ask_prices
@@ -140,20 +138,20 @@ class OrderBook:
         for p in bprices:
             total = sum(o.qty for o in bid_book[p])
             bids_q += total
-        print(f'total bids volume : {bids_q}')
+        #print(f'total bids volume : {bids_q}')
         
         for p in aprices:
             total = sum(o.qty for o in ask_book[p])
             asks_q += total
-        print(f'total asks volume : {asks_q}')
+        #print(f'total asks volume : {asks_q}')
 
         imb = bids_q - asks_q
-        print(f'current RAW Orderbook Imbalance : {imb}')
+        #print(f'current RAW Orderbook Imbalance : {imb}')
 
         denom = bids_q + asks_q
 
         norm_imb = float((imb) / denom) if denom > 0 else 0.0
-        print(f'current NORM Orderbook Imbalance : {norm_imb}')
+        #print(f'current NORM Orderbook Imbalance : {norm_imb}')
 
         return norm_imb
     
@@ -281,8 +279,8 @@ class OrderBook:
 
 
             maker = maker_q[0]
-            print(f'maker is {maker}')
-            print(f'taker is {taker}')
+            #print(f'maker is {maker}')
+            #print(f'taker is {taker}')
             fill = min(taker.qty, maker.qty)
 
             trades.append(

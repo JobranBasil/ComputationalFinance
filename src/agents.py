@@ -114,9 +114,9 @@ class NoiseTrader(BaseAgent):
         self,
         trader_id: int,
         rng: np.random.Generator,
-        participation_rate: float = 0.3,
+        participation_rate: float = 0.5,
         market_prob: float = 0.5,
-        sign_persistence: float = 0.7,
+        sign_persistence: float = 0.5,
         max_depth_ticks: int = 3,
     ):
         super().__init__(trader_id, rng)
