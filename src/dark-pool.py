@@ -62,7 +62,7 @@ class DarkPool:
         # orders pending lit-book routing: list of (execute_at_ts, LitOrder)
         self.pending_lit_routes: List[tuple[int, LitOrder]] = []
 
-        # Order lookup dict for constant time order lookup
+        # Order lookup dict for order lookup
         self._order_index: Dict[int, Order] = {}
 
         # lazy-deletion set where cancelled order IDs skipped during matching/expiry
@@ -116,7 +116,6 @@ class DarkPool:
         """
 
 
-        # TODO: review
         trades: List[Trade] = []
 
         if order.qty <= 0:
@@ -169,10 +168,8 @@ class DarkPool:
         Partially filled orders are placed back at the front of their respective queue
         so they retain time priority for the next matching round.
 
-        After matching, stale orders are expired and scheduled for lit-book routing.
-        Pending routes are NOT processed here — the simulation loop must call
-        _process_pending_routes(t) each tick so routing fires on actual time steps,
-        not only when new dark pool orders arrive.
+        Expiry and lit-book routing are NOT handled here — both are owned by tick(t),
+        which the simulation loop must call every step.
 
         Every executed trade is published to self.trade_tape so that all traders
         can observe dark-pool activity.
@@ -237,9 +234,6 @@ class DarkPool:
             if ask.qty == 0:
                 self._order_index.pop(self.asks.popleft().order_id, None)
 
-        # expire stale orders that have been resting too long and route them to the lit book as market orders
-        self._expire_stale_orders(timestamp)
-
         # return the list of trades filled by this matching round
         return trades
 
@@ -272,6 +266,7 @@ class DarkPool:
         :param current_ts: the current simulation timestamp.
         :return routed: list of LitOrder objects that were sent to the lit book.
         """
+
 
         routed: List[LitOrder] = []
 
@@ -325,6 +320,7 @@ class DarkPool:
         :return: True if the order was found and marked canceled, False otherwise.
         """
 
+
         if order_id not in self._order_index:
             return False
 
@@ -361,13 +357,12 @@ class DarkPool:
         Advance the dark pool clock by one simulation timestep.
 
         Must be called by the simulation loop every tick, regardless of whether
-        any orders were submitted. This guarantees that:
-          - stale orders are expired on actual time ticks, not only when new
-            orders arrive via submit_order.
-          - pending lit-book routes whose routing delay has elapsed are executed.
+        any orders were submitted. This guarantees that stale orders are expired on actual time ticks, not only when new orders arrive via submit_order and that pending lit-book routes whose routing delay has elapsed are executed.
 
         :param t: current simulation timestep.
+        :return: None
         """
+
 
         self._expire_stale_orders(t)
         self._process_pending_routes(t)
