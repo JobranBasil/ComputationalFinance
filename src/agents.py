@@ -117,7 +117,7 @@ class NoiseTrader(BaseAgent):
         participation_rate: float = 0.9,
         market_prob: float = 0.5,
         sign_persistence: float = 0.7,
-        max_depth_ticks: int = 3,
+        max_depth_ticks: int = 20,
     ):
         super().__init__(trader_id, rng)
         self.participation_rate = participation_rate

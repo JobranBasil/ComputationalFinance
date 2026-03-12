@@ -149,12 +149,13 @@ def plot_snapshots(snapshots: list[dict], out_path: str) -> None:
         axes = [axes]
 
     # Fixed half-width in price units across all snapshots
-    try:
-        tick = snapshots[0]["bids"][0][0] - snapshots[0]["bids"][1][0]
-    except IndexError:
-        tick = 0.01
-    bar_width = tick * 0.8
-    half_width = tick * 12  # controls how many levels are visible — adjust as needed
+    #try:
+      #  tick = snapshots[0]["bids"][0][0] - snapshots[0]["bids"][1][0]
+    #except IndexError:
+     #   tick = 0.01
+    tick = snapshots[0]["bids"][0][0] - snapshots[0]["bids"][1][0]
+    bar_width = tick * 0.1
+    half_width = tick * 5  # controls how many levels are visible — adjust as needed
 
     for ax, snap in zip(axes, snapshots):
         bids = snap["bids"]
@@ -383,8 +384,8 @@ def main() -> None:
         plot_snapshots(snapshots, os.path.join(out_dir, "ABM_OrderBook_Snapshots.png"))
 
     #Get the demand curve at the end of the simulation and save it
-    final_bids = book.top_n_levels("buy", 10)
-    final_asks = book.top_n_levels("sell", 10)
+    final_bids = book.top_n_levels("buy", 20)
+    final_asks = book.top_n_levels("sell", 20)
     plot_demand_curve(final_bids, final_asks, os.path.join(out_dir, "demand_curve.png"))
 
     #Save the order and book logs as CSV files for further analysis
