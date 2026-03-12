@@ -1,13 +1,16 @@
 import os
 import sys
+import importlib
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-
 from .orderbook import OrderBook, Order
 from .agents import NoiseTrader, MarketMaker, InstitutionalTrader, MarketMakerAS, Action
 
+_dp_mod = importlib.import_module("src.dark_pool")
+DarkPool = _dp_mod.DarkPool
+DarkOrder = _dp_mod.Order
 
 # ---------------------------------------------------------------------------
 # Order book helpers
@@ -218,14 +221,13 @@ def plot_demand_curve(bids: list[tuple], asks: list[tuple], out_path: str) -> No
 # Simulation
 # ---------------------------------------------------------------------------
 
-def run_simulation(book: OrderBook, agents: list, steps: int) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[dict]]:
+def run_simulation(book: OrderBook, agents: list, dark_pool, steps: int) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, list[dict]]:
     order_records = []
     book_records = []
     trade_records = []
+    dp_trade_records = []
     snapshots = []
     rng = np.random.default_rng(42)
-
-    inventory_changes = 0 #For debugging MarketMakerAS
 
     for t in range(steps):
         print(f"\nTIME STEP : {t}\n")
@@ -265,6 +267,22 @@ def run_simulation(book: OrderBook, agents: list, steps: int) -> tuple[pd.DataFr
                         "TakerOrderID": tr.taker_order_id,
                     })
                     trades_this_step.append(tr)
+
+            # institutional traders also submit to the dark pool
+            if isinstance(agent, InstitutionalTrader):
+                dp_trades = agent.act_dark(t, dark_pool)
+                if dp_trades:
+                    for tr in dp_trades:
+                        dp_trade_records.append({
+                            "t": tr.timestamp,
+                            "Price": tr.price,
+                            "Qty": tr.qty,
+                        })
+
+        # advance dark pool clock, expiry and routing fire here
+        dark_pool.tick(t)
+
+
         '''
             # Notify MarketMakerAS of trades on its orders
             mmAS_agent = next((agent for agent in agents if isinstance(agent, MarketMakerAS)), None)
@@ -344,6 +362,7 @@ def run_simulation(book: OrderBook, agents: list, steps: int) -> tuple[pd.DataFr
         pd.DataFrame(order_records),
         pd.DataFrame(book_records),
         pd.DataFrame(trade_records),
+        pd.DataFrame(dp_trade_records),
         snapshots,
     )
 
@@ -365,20 +384,27 @@ def main() -> None:
         NoiseTrader(trader_id=6, rng=np.random.default_rng(6)),
         MarketMaker(trader_id=2, rng=np.random.default_rng(2)),
         InstitutionalTrader(trader_id=3, rng=np.random.default_rng(3)),
-        #MarketMakerAS(trader_id=4, rng=np.random.default_rng(4), horizon=1000, A=1, kappa=10, gamma=0.1, sigma=0.05)
+        InstitutionalTrader(trader_id=4, rng=np.random.default_rng(4)),
     ]
-    
+
+    # instantiate the dark pool with the lit order book
+    dark_pool = DarkPool(
+        lit_orderbook=book,
+        max_resting_ticks=50,
+        routing_delay=5,
+        tape_delay=5,
+    )
 
     #Get the order and book logs, and periodic snapshots of the order book state for visualization
-    orders_df, book_df, trades_df, snapshots = run_simulation(book, agents, steps=2500)
+    orders_df, book_df, trades_df, dp_trades_df, snapshots = run_simulation(book, agents, dark_pool, steps=2500)
     book_df = add_market_analytics(book_df, vol_window=10)
 
     #Plot each time series and save the order book snapshots and demand curve at the end of the simulation
-    plot_series(book_df["Spread"], "Spread",              os.path.join(out_dir, "spread.png"))
-    plot_series(book_df["Mid"],    "Mid-price diffusion", os.path.join(out_dir, "mid.png"))
-    plot_series(book_df["OBI"],    "Orderbook Imbalance", os.path.join(out_dir, "obi.png"))
-    plot_series(book_df["VWAP"],    "Volume-Weighted Average Price (VWAP)", os.path.join(out_dir, "vwap.png"))
-
+    plot_series(book_df["Spread"],        "Spread",                                  os.path.join(out_dir, "spread.png"))
+    plot_series(book_df["Mid"],           "Mid-price diffusion",                     os.path.join(out_dir, "mid.png"))
+    plot_series(book_df["OBI"],           "Orderbook Imbalance",                     os.path.join(out_dir, "obi.png"))
+    plot_series(book_df["VWAP"],          "Volume-Weighted Average Price (VWAP)",    os.path.join(out_dir, "vwap.png"))
+    plot_series(book_df["DPRecentVolume"],"Dark Pool: Recent Traded Volume (20-tick)",os.path.join(out_dir, "dp_volume.png"))
 
     if snapshots:
         plot_snapshots(snapshots, os.path.join(out_dir, "ABM_OrderBook_Snapshots.png"))
@@ -392,6 +418,9 @@ def main() -> None:
     orders_df.to_csv(os.path.join(out_dir, "orders_log.csv"), index=False)
     book_df.to_csv(os.path.join(out_dir, "book_log.csv"), index=False)
     trades_df.to_csv(os.path.join(out_dir, "trades_log.csv"), index=False)
+
+    # Add DP trades to the trades log
+    # dp_trades_df.to_csv(os.path.join(out_dir, "dp_trades_log.csv"), index=False)
 
 
 if __name__ == "__main__":
