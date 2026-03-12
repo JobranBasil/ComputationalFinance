@@ -9,226 +9,387 @@ from .orderbook import OrderBook, Order
 from .agents import NoiseTrader, MarketMaker, InstitutionalTrader, MarketMakerAS, Action
 
 
-def apply_action(book: OrderBook, action: Action, t: int) -> list:
-    """
-    Applies an agent action to the order book.
-    Returns list of trades executed (for basic debugging).
-    """
+# ---------------------------------------------------------------------------
+# Order book helpers
+# ---------------------------------------------------------------------------
+
+def apply_action(book: OrderBook, action: Action | list) -> list:
+    """Apply an agent action to the order book. Returns list of trades."""
     if action is None:
         return []
+
+    if isinstance(action, list):
+        all_trades = []
+        for sub_action in action:
+            all_trades.extend(apply_action(book, sub_action))
+        return all_trades
 
     if isinstance(action, tuple) and action[0] == "cancel":
         book.cancel(action[1])
         return []
 
-    if isinstance(action, list):
-        trades = []
-        for a in action:
-            trades.extend(apply_action(book, a, t))
-        return trades
-
     if isinstance(action, Order):
-        if action.price is None:
-            trades = book.execute_market(action)
-        else:
-            trades = book.add_limit(action)
-        return trades
+        return book.execute_market(action) if action.price is None else book.add_limit(action)
 
     raise TypeError(f"Unknown action type: {type(action)}")
 
-
-def seed_initial_book(book: OrderBook, best_bid: float = 100.0, best_ask: float = 101.0, levels: int = 5, rng=None):
+def seed_initial_book(
+    book: OrderBook,
+    best_bid: float = 100.0,
+    best_ask: float = 101.0,
+    levels: int = 5,
+    rng: np.random.Generator | None = None,
+) -> None:
+    """Seed the order book with synthetic resting liquidity around an initial spread."""
     rng = rng or np.random.default_rng(42)
-    # bids
     for i in range(levels):
-        px = best_bid - book.tick * i
-        qty = int(rng.integers(1, 10))
-        book.add_limit_post_only(Order(order_id=10_000 + i, trader_id=-1, side="buy", qty=qty, price=px, ts=0))
-    # asks
-    for i in range(levels):
-        px = best_ask + book.tick * i
-        qty = int(rng.integers(1, 10))
-        book.add_limit_post_only(Order(order_id=20_000 + i, trader_id=-1, side="sell", qty=qty, price=px, ts=0))
+        book.add_limit_post_only(Order(
+            order_id=10_000 + i, trader_id=-1, side="buy",
+            qty=int(rng.integers(1, 10)), price=best_bid - book.tick * i, ts=0,
+        ))
+        book.add_limit_post_only(Order(
+            order_id=20_000 + i, trader_id=-1, side="sell",
+            qty=int(rng.integers(1, 10)), price=best_ask + book.tick * i, ts=0,
+        ))
 
 
-def main():
-    out_dir = os.path.join(os.path.dirname(__file__), "ABM_OB_plots")
-    os.makedirs(out_dir, exist_ok=True)
+# ---------------------------------------------------------------------------
+# Analytics
+# ---------------------------------------------------------------------------
 
+def best_level_depth(book: OrderBook) -> tuple[int, int]:
+    bb, ba = book.best_bid(), book.best_ask()
+    bid_qty = sum(o.qty for o in book.bids.get(bb, [])) if np.isfinite(bb) else 0
+    ask_qty = sum(o.qty for o in book.asks.get(ba, [])) if np.isfinite(ba) else 0
+    return bid_qty, ask_qty
+
+
+def total_visible_depth(book: OrderBook) -> tuple[int, int]:
+    bid_total = sum(o.qty for p in book.bid_prices for o in book.bids[p])
+    ask_total = sum(o.qty for p in book.ask_prices for o in book.asks[p])
+    return bid_total, ask_total
+
+
+def top_n_depth(book: OrderBook, n: int = 5) -> tuple[int, int]:
+    bid_depth = sum(q for _, q in book.top_n_levels("buy", n))
+    ask_depth = sum(q for _, q in book.top_n_levels("sell", n))
+    return bid_depth, ask_depth
+
+def top_n_obi(book: OrderBook, n: int = 5) -> float:
+    bid_depth, ask_depth = top_n_depth(book, n)
+    denom = bid_depth + ask_depth
+    return (bid_depth - ask_depth) / denom if denom > 0 else 0.0
+
+def microprice(book: OrderBook) -> float:
+    bb, ba = book.best_bid(), book.best_ask()
+    if not np.isfinite(bb) or not np.isfinite(ba):
+        return np.nan
+
+    qb = sum(o.qty for o in book.bids.get(bb, []))
+    qa = sum(o.qty for o in book.asks.get(ba, []))
+    denom = qb + qa
+    if denom == 0:
+        return np.nan
+
+    return (ba * qb + bb * qa) / denom
+
+def trade_volume(trades: list) -> int:
+    return sum(tr.qty for tr in trades)
+
+
+def signed_trade_volume(trades: list) -> int:
+    return sum(tr.qty if tr.aggressor_side == "buy" else -tr.qty for tr in trades)
+
+
+def vwap(trades: list) -> float:
+    if not trades:
+        return np.nan
+    total_qty = sum(tr.qty for tr in trades)
+    if total_qty == 0:
+        return np.nan
+    return sum(tr.price * tr.qty for tr in trades) / total_qty
+
+
+def add_market_analytics(book_df: pd.DataFrame, vol_window: int = 10) -> pd.DataFrame:
+    df = book_df.copy()
+
+    df["MidReturn"] = df["Mid"].diff()
+    df["LogMidReturn"] = np.log(df["Mid"] / df["Mid"].shift(1))
+    df["RollingVol"] = df["LogMidReturn"].rolling(vol_window).std()
+    df["SpreadChange"] = df["Spread"].diff()
+    df["MicropriceReturn"] = df["Microprice"].diff()
+
+    '''
+    # simple impact proxy
+    df["ImpactProxy"] = np.where(
+        df["TradeVolume"] > 0,
+        df["MidReturn"].abs() / df["TradeVolume"],
+        np.nan,
+    )
+    '''
+    return df
+
+# ---------------------------------------------------------------------------
+# Plotting
+# ---------------------------------------------------------------------------
+
+def plot_series(series: pd.Series, title: str, out_path: str) -> None:
+    fig, ax = plt.subplots(figsize=(12, 4))
+    ax.plot(series, label=title)
+    ax.set_title(title)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
+def plot_snapshots(snapshots: list[dict], out_path: str) -> None:
+    fig, axes = plt.subplots(len(snapshots), 1, figsize=(8, 3 * len(snapshots)))
+    if len(snapshots) == 1:
+        axes = [axes]
+
+    # Fixed half-width in price units across all snapshots
+    tick = snapshots[0]["bids"][0][0] - snapshots[0]["bids"][1][0]
+    bar_width = tick * 0.8
+    half_width = tick * 12  # controls how many levels are visible — adjust as needed
+
+    for ax, snap in zip(axes, snapshots):
+        bids = snap["bids"]
+        asks = snap["asks"]
+
+        if bids:
+            bid_prices, bid_qtys = zip(*bids)
+            ax.bar(bid_prices, bid_qtys, width=bar_width, label="Bids")
+        else:
+            bid_prices, bid_qtys = [], []
+
+        if asks:
+            ask_prices, ask_qtys = zip(*asks)
+            ax.bar(ask_prices, [-q for q in ask_qtys], width=bar_width, label="Asks")
+        else:
+            ask_prices, ask_qtys = [], []
+
+        ax.axhline(0, linewidth=1)
+
+        # only draw mid / set xlim if both sides exist
+        if bids and asks:
+            mid = (ask_prices[0] + bid_prices[0]) / 2
+            ax.axvline(mid, linewidth=1, color="black", linestyle="--")
+            ax.set_xlim(mid - half_width, mid + half_width)
+        elif bids:
+            mid = bid_prices[0]
+            ax.set_xlim(mid - half_width, mid + half_width)
+        elif asks:
+            mid = ask_prices[0]
+            ax.set_xlim(mid - half_width, mid + half_width)
+
+        ax.set_title(f"t={snap['t']}")
+        ax.grid(True, linestyle="--", alpha=0.4)
+        ax.legend(loc="upper right")
+        ax.ticklabel_format(useOffset=False, style="plain")
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
+def plot_demand_curve(bids: list[tuple], asks: list[tuple], out_path: str) -> None:
+    bid_prices = [p for p, _ in bids]
+    ask_prices = [p for p, _ in asks]
+    bid_cum_qty = [sum(q for p, q in bids if p >= price) for price in bid_prices]
+    ask_cum_qty = [sum(q for p, q in asks if p <= price) for price in ask_prices]
+
+    fig, ax = plt.subplots()
+    ax.step(bid_cum_qty, bid_prices, where="post", color="blue", label="Bids")
+    ax.step(ask_cum_qty, ask_prices, where="post", color="red", label="Asks")
+    ax.set_xlabel("Cumulative Quantity")
+    ax.set_ylabel("Price")
+    ax.set_title("Demand Curve")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+# ---------------------------------------------------------------------------
+# Simulation
+# ---------------------------------------------------------------------------
+
+def run_simulation(book: OrderBook, agents: list, steps: int) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[dict]]:
+    order_records = []
+    book_records = []
+    trade_records = []
+    snapshots = []
     rng = np.random.default_rng(42)
 
-    book = OrderBook(tick=0.01, max_depth_levels=10)
-    seed_initial_book(book, best_bid=100.05, best_ask=100.1, levels=5, rng=rng)
-    steps = 10000
-    agents = [
-        NoiseTrader(trader_id=1, rng=np.random.default_rng(1)),
-        NoiseTrader(trader_id=5, rng=np.random.default_rng(5)),
-        NoiseTrader(trader_id=6, rng=np.random.default_rng(6)),
-        MarketMaker(trader_id=2, rng=np.random.default_rng(2)),
-        InstitutionalTrader(trader_id=3, rng=np.random.default_rng(3)),
-        MarketMakerAS(trader_id=4, rng=np.random.default_rng(4), horizon=10000, A=1, kappa=10, gamma=0.1, sigma=0.05)
-    ]
     inventory_changes = 0 #For debugging MarketMakerAS
-    
-    logs = {
-        "t": [],
-        "BestBid": [],
-        "BestAsk": [],
-        "Spread": [],
-        "Mid": [],
-        "Trades": [],
-        "Orders": [],
-        "BidLvls": [],
-        "AskLvls": [],
-        "LastActor": [],
-        "OBI":[],
-    }
-
-    snapshots = []
 
     for t in range(steps):
-        trades_this_t = 0
-        last_actor = None
+        print(f"\nTIME STEP : {t}\n")
 
-        # simple sequential activation
-        print(f"TIME STEP : {t}")
-        for a in agents:
-            action = a.act(t, book)
-            print(action)
-            ntr = apply_action(book, action, t)
-            if action is not None:
-                last_actor = a.__class__.__name__
-            trades_this_t += len(ntr)
-            #print(trades_this_t)
-        
+        trades_this_step = []
+
+        for agent in agents:
+
+            if isinstance(agent, MarketMaker):
+                n_actions = int(rng.integers(1, 4))
+            else:
+                n_actions = 1
+
+            for _ in range(n_actions):
+
+                action = agent.act(t, book)
+                print(action)
+                trades = apply_action(book, action)
+
+                if isinstance(action, Order):
+                    order_records.append({
+                        "t": t,
+                        "Agent": agent.trader_id,
+                        "OrderType": "market" if action.price is None else "limit",
+                        "Price": action.price,
+                        "Qty": action.qty,
+                        "Side": action.side,
+                    })
+
+                for tr in trades:
+                    trade_records.append({
+                        "t": tr.ts,
+                        "Price": tr.price,
+                        "Qty": tr.qty,
+                        "AggressorSide": tr.aggressor_side,
+                        "MakerOrderID": tr.maker_order_id,
+                        "TakerOrderID": tr.taker_order_id,
+                    })
+                    trades_this_step.append(tr)
+
             # Notify MarketMakerAS of trades on its orders
             mmAS_agent = next((agent for agent in agents if isinstance(agent, MarketMakerAS)), None)
-            for trade in ntr:
+            for trade in trades:
                 if trade.maker_trader_id == mmAS_agent.trader_id or trade.taker_trader_id == mmAS_agent.trader_id:
                     mmAS_agent.update_inventory(trade)
                     print(f'MarketMakerAS inventory updated to {mmAS_agent.inventory} after trade {trade}\n')
                     inventory_changes += 1 #For debugging and to decide paramters
                     break
 
+        #print(f'--------------- Trades happening in time {t} is : {trades_this_step} -----------------')
+
         bb, ba = book.best_bid(), book.best_ask()
-        print("spread", ba - bb, "bar_width", 0.002)
-        if bb >= ba:
-            print("BOOK CROSSED!!!", bb, ba)
-            raise ValueError('BOOK CROSSED bb >= ba')
-        
-        best_bid_qty = sum(o.qty for o in book.bids.get(bb, [])) if bb > 0 else 0
-        best_ask_qty = sum(o.qty for o in book.asks.get(ba, [])) if np.isfinite(ba) else 0
-        #print("best_bid_qty", best_bid_qty, "best_ask_qty", best_ask_qty)
         sp = book.spread()
         md = book.mid_price()
         obi = book.book_imbalance()
 
-        logs["t"].append(t)
-        logs["BestBid"].append(bb)
-        logs["BestAsk"].append(ba)
-        logs["Spread"].append(sp)
-        logs["Mid"].append(md)
-        logs["Trades"].append(trades_this_t)
-        logs["Orders"].append(len(book.order_index))
-        logs["BidLvls"].append(len(book.bid_prices))
-        logs["AskLvls"].append(len(book.ask_prices))
-        logs["LastActor"].append(last_actor)
-        logs["OBI"].append(obi)
+        bid_best_depth, ask_best_depth = best_level_depth(book)
+        bid_total_depth, ask_total_depth = total_visible_depth(book)
+        bid_depth_5, ask_depth_5 = top_n_depth(book, 5)
+        obi_5 = top_n_obi(book, 5)
+        mp = microprice(book)
 
-        if t % 50 == 0:
-            print(f"t={t}, bb={bb:.4f}, ba={ba:.4f}, spread={sp:.4f}, Norm obi={obi:.4f}")
+        step_trade_count = len(trades_this_step)
+        step_trade_volume = trade_volume(trades_this_step)
+        step_signed_volume = signed_trade_volume(trades_this_step)
+        step_vwap = vwap(trades_this_step)
 
+        #print(f'Inventory changes for MMAS/Trades made: {inventory_changes}')
+        
+        if not np.isfinite(bb):
+            print(f"WARNING: bid book empty at t={t}")
+        if not np.isfinite(ba):
+            print(f"WARNING: ask book empty at t={t}")
+
+        if np.isfinite(bb) and np.isfinite(ba) and bb >= ba:
+            raise ValueError(f"BOOK CROSSED: best_bid={bb} >= best_ask={ba}")
+
+        book_records.append({
+            "t": t,
+            "BestBid": bb,
+            "BestAsk": ba,
+            "Spread": sp,
+            "RelativeSpread": sp / md if np.isfinite(md) and md != 0 else np.nan,
+            "Mid": md,
+            "Microprice": mp,
+            "MidMinusMicroprice": md - mp if np.isfinite(md) and np.isfinite(mp) else np.nan,
+            "OBI": obi,
+            "OBI_5": obi_5,
+            "BestBidDepth": bid_best_depth,
+            "BestAskDepth": ask_best_depth,
+            "Top5BidDepth": bid_depth_5,
+            "Top5AskDepth": ask_depth_5,
+            "TotalBidDepth": bid_total_depth,
+            "TotalAskDepth": ask_total_depth,
+            "NumBidLevels": len(book.bid_prices),
+            "NumAskLevels": len(book.ask_prices),
+            "TradesThisStep": step_trade_count,
+            "TradeVolume": step_trade_volume,
+            "SignedTradeVolume": step_signed_volume,
+            "VWAP": step_vwap,
+        })
+
+        if t % 1 == 0:
+            print(f"t={t}, bb={bb:.4f}, ba={ba:.4f}, spread={sp:.4f}, obi={obi:.4f}, bids : {book.top_n_levels('buy', 10)}, asks : {book.top_n_levels('sell', 10)}")
+
+        if t % 25 == 0:
+            print(f"t={t}, bb={bb:.4f}, ba={ba:.4f}, spread={sp:.4f}, obi={obi:.4f}")
             snapshots.append({
                 "t": t,
                 "bids": book.top_n_levels("buy", 10),
                 "asks": book.top_n_levels("sell", 10),
-                "last_actor": last_actor
             })
 
-        bid_depths = book.top_n_levels(side='buy', n =10)
-        ask_depths = book.top_n_levels(side='sell', n =10)
-        print(f'bids : {bid_depths}')
-        print(f'asks : {ask_depths}')
-        
-    print(f'Inventory changes for MMAS/Trades made: {inventory_changes}')
-    df = pd.DataFrame(logs)
 
-    # Plots (optional)
-    plt.figure(figsize=(12, 4))
-    plt.plot(df["Spread"], label="Spread")
-    plt.title("Spread")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(os.path.join(out_dir, "spread.png"))
-    plt.close()
+    return (
+        pd.DataFrame(order_records),
+        pd.DataFrame(book_records),
+        pd.DataFrame(trade_records),
+        snapshots,
+    )
 
-    plt.figure(figsize=(12, 4))
-    plt.plot(df["Mid"], label="Mid")
-    plt.title("Mid-price diffusion")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(os.path.join(out_dir, "mid.png"))
-    plt.close()
 
-    plt.figure(figsize=(12, 4))
-    plt.plot(df["OBI"], label="OBI")
-    plt.title("Orderbook Imbalance")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(os.path.join(out_dir, "obi.png"))
-    plt.close()
+def main() -> None:
 
-    # Snapshot viz (simple)
+    #Connect directory to ABM_OB_plots
+    out_dir = os.path.join(os.path.dirname(__file__), "ABM_OB_plots")
+    os.makedirs(out_dir, exist_ok=True)
+
+    #Seed the order book with some initial liquidity and create agents with distinct RNGs for independent behavior
+    rng = np.random.default_rng(42)
+    book = OrderBook(tick=0.01, max_depth_levels=10)
+    seed_initial_book(book, best_bid=100.05, best_ask=100.1, levels=5, rng=rng)
+
+    agents = [
+        NoiseTrader(trader_id=1, rng=np.random.default_rng(1)),
+        NoiseTrader(trader_id=5, rng=np.random.default_rng(5)),
+        NoiseTrader(trader_id=6, rng=np.random.default_rng(6)),
+        MarketMaker(trader_id=2, rng=np.random.default_rng(2)),
+        InstitutionalTrader(trader_id=3, rng=np.random.default_rng(3)),
+        MarketMakerAS(trader_id=4, rng=np.random.default_rng(4), horizon=1000, A=1, kappa=10, gamma=0.1, sigma=0.05)
+    ]
+    
+
+    #Get the order and book logs, and periodic snapshots of the order book state for visualization
+    orders_df, book_df, trades_df, snapshots = run_simulation(book, agents, steps=2500)
+    book_df = add_market_analytics(book_df, vol_window=10)
+
+    #Plot each time series and save the order book snapshots and demand curve at the end of the simulation
+    plot_series(book_df["Spread"], "Spread",              os.path.join(out_dir, "spread.png"))
+    plot_series(book_df["Mid"],    "Mid-price diffusion", os.path.join(out_dir, "mid.png"))
+    plot_series(book_df["OBI"],    "Orderbook Imbalance", os.path.join(out_dir, "obi.png"))
+    plot_series(book_df["VWAP"],    "Volume-Weighted Average Price (VWAP)", os.path.join(out_dir, "vwap.png"))
+
+
     if snapshots:
-        fig, axes = plt.subplots(len(snapshots), 1, figsize=(18, 2.5 * len(snapshots)))
-        if len(snapshots) == 1:
-            axes = [axes]
+        plot_snapshots(snapshots, os.path.join(out_dir, "ABM_OrderBook_Snapshots.png"))
 
-        for ax, snap in zip(axes, snapshots):
-            bids = snap["bids"]
-            asks = snap["asks"]
+    #Get the demand curve at the end of the simulation and save it
+    final_bids = book.top_n_levels("buy", 10)
+    final_asks = book.top_n_levels("sell", 10)
+    plot_demand_curve(final_bids, final_asks, os.path.join(out_dir, "demand_curve.png"))
 
-            bid_prices = [p for p, _ in bids]
-            bid_qty = [q for _, q in bids]
-            ask_prices = [p for p, _ in asks]
-            ask_qty = [q for _, q in asks]
-            mids = (ask_prices[0] + bid_prices[0])/2
-
-            ax.bar(bid_prices, bid_qty, width=0.001, label="Bids")
-            ax.bar(ask_prices, [-q for q in ask_qty], width=0.001, label="Asks")
-            ax.axhline(0, linewidth=1)
-            ax.axvline(mids, linewidth=1)
-            ax.set_title(f"t={snap['t']} | last_actor={snap['last_actor']}")
-            ax.grid(True, linestyle="--", alpha=0.4)
-            ax.legend()
-            ax.ticklabel_format(useOffset=False, style='plain')
-
-        plt.tight_layout()
-        plt.savefig(os.path.join(out_dir, "ABM_OrderBook_Snapshots.png"))
-        plt.close()
-
-    #Create demand curve of the book, with cumulative quantity at each price level.
-    bid_prices = [p for p, q in bids]
-    bid_quantities = [sum(q for p, q in bids if p >= price) for price in bid_prices]
-
-    ask_prices = [p for p, q in asks]
-    ask_quantities = [sum(q for p, q in asks if p <= price) for price in ask_prices]
-
-    # Piecewise constant (step) plots
-    plt.step(bid_quantities, bid_prices, where='post', color='blue', label='Bids')
-    plt.step(ask_quantities, ask_prices, where='post', color='red', label='Asks')
-
-    plt.xlabel('Cumulative Quantity')
-    plt.ylabel('Price')
-    plt.title('Demand Curve')
-    plt.legend()
-    plt.savefig(os.path.join(out_dir, "demand_curve.png"))
-    plt.close()
-
-
-    # Save logs
-    df.to_csv(os.path.join(out_dir, "run_log.csv"), index=False)
+    #Save the order and book logs as CSV files for further analysis
+    orders_df.to_csv(os.path.join(out_dir, "orders_log.csv"), index=False)
+    book_df.to_csv(os.path.join(out_dir, "book_log.csv"), index=False)
+    trades_df.to_csv(os.path.join(out_dir, "trades_log.csv"), index=False)
 
 
 if __name__ == "__main__":
     main()
+

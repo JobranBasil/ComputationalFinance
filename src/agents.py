@@ -114,7 +114,7 @@ class NoiseTrader(BaseAgent):
         self,
         trader_id: int,
         rng: np.random.Generator,
-        participation_rate: float = 0.3,
+        participation_rate: float = 0.9,
         market_prob: float = 0.5,
         sign_persistence: float = 0.7,
         max_depth_ticks: int = 3,
@@ -183,7 +183,7 @@ class MarketMakerAS(BaseAgent):
         self.A = A
         self.last_bid_id = None
         self.last_ask_id = None
-        self.ttl = 50  # number of ticks before cancellation
+        self.ttl = 50  # number of time steps before cancellation
         self.bid_age = 0
         self.ask_age = 0
    
@@ -243,13 +243,13 @@ class MarketMakerAS(BaseAgent):
         ask_price = rerserve_price + optimal_spread / 2
         
         # prevent extreme quotes by bounding within a reasonable range around mid
-        max_offset = 10 * book.tick
+        max_offset = 50 * book.tick
         bid_price = max(bid_price, mid_price - max_offset)
         ask_price = min(ask_price, mid_price + max_offset)
 
         print(f"MarketMakerAS act: t={t}, inventory={self.inventory}, mid={mid_price:.2f}, bid_px={bid_price:.2f}, ask_px={ask_price:.2f}")
 
-        qty = 20
+        qty = 1
         #Quote both sides every tick
         post_bid = True
         post_ask = True
@@ -302,21 +302,51 @@ class MarketMaker(BaseAgent):
 
 
 class InstitutionalTrader(BaseAgent):
-    """
-    Minimal placeholder:
-    - rarely acts
-    - when acts, sends a larger market order (exercises matching)
-    """
+    def __init__(self, trader_id: int, rng: np.random.Generator,
+                 participation_rate: float = 0.05,
+                 use_iceberg_prob: float = 0.8,
+                 peak_range=(3, 10),
+                 total_range=(20, 60),
+                 price_mode: str = "join"):  # "join" or "improve"
+        super().__init__(trader_id, rng)
+        self.participation_rate = participation_rate
+        self.use_iceberg_prob = use_iceberg_prob
+        self.peak_range = peak_range
+        self.total_range = total_range
+        self.price_mode = price_mode
 
     def act(self, t: int, book: OrderBook) -> Action:
-        if self.rng.random() > 0.05:
+        # 1) If currently executing iceberg, keep working it
+        if self.iceberg is not None:
+            return self.iceberg_step(t, book)
+
+        # 2) Decide whether to initiate a parent order
+        if self.rng.random() > self.participation_rate:
             return None
 
         side: Side = "buy" if self.rng.random() < 0.5 else "sell"
+        total_qty = int(self.rng.integers(self.total_range[0], self.total_range[1] + 1))
 
-        # TODO: update min and max order quantities to match real life values
-        qty = int(self.rng.integers(10, 50))
-        return Order(self.new_oid(), self.trader_id, side, qty, price=None, ts=t)
+        # If you don't have quotes, just skip
+        bb, ba = book.best_bid(), book.best_ask()
+        if bb <= 0 or not np.isfinite(ba):
+            return None
+
+        peak = int(self.rng.integers(self.peak_range[0], self.peak_range[1] + 1))
+
+        # price selection (simple)
+        if side == "buy":
+            px = bb if self.price_mode == "join" else min(bb + book.tick, ba - book.tick)
+        else:
+            px = ba if self.price_mode == "join" else max(ba - book.tick, bb + book.tick)
+
+        # 3) Choose iceberg vs one-shot market
+        if self.rng.random() < self.use_iceberg_prob:
+            self.iceberg_start(side=side, total_qty=total_qty, peak=peak, price=px)
+            print('--------------------- ICEBERG PLACED --------------------------')
+            return self.iceberg_step(t, book)  # post first slice
+        else:
+            return Order(self.new_oid(), self.trader_id, side, total_qty, price=None, ts=t)
 
     def act_dark(self, t: int, dark_pool) -> Optional[list]:
         """
