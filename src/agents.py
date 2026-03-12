@@ -140,7 +140,7 @@ class NoiseTrader(BaseAgent):
 
         self.last_side = side
 
-        qty = int(self.rng.integers(1, 5))
+        qty = int(self.rng.integers(10, 20))
 
         # market order
         if self.rng.random() < self.market_prob:
@@ -149,6 +149,7 @@ class NoiseTrader(BaseAgent):
         # limit order around mid
         mid = book.mid_price()
         if not np.isfinite(mid):
+            print('--------------------------------------- BAD MIND ---------------------------------------------')
             mid = 100.0
 
         tick = book.tick
@@ -305,8 +306,8 @@ class InstitutionalTrader(BaseAgent):
     def __init__(self, trader_id: int, rng: np.random.Generator,
                  participation_rate: float = 0.05,
                  use_iceberg_prob: float = 0.8,
-                 peak_range=(3, 10),
-                 total_range=(20, 60),
+                 peak_range=(30, 50),
+                 total_range=(100, 150),
                  price_mode: str = "join"):  # "join" or "improve"
         super().__init__(trader_id, rng)
         self.participation_rate = participation_rate

@@ -149,7 +149,10 @@ def plot_snapshots(snapshots: list[dict], out_path: str) -> None:
         axes = [axes]
 
     # Fixed half-width in price units across all snapshots
-    tick = snapshots[0]["bids"][0][0] - snapshots[0]["bids"][1][0]
+    try:
+        tick = snapshots[0]["bids"][0][0] - snapshots[0]["bids"][1][0]
+    except IndexError:
+        tick = 0.01
     bar_width = tick * 0.8
     half_width = tick * 12  # controls how many levels are visible — adjust as needed
 
@@ -261,7 +264,7 @@ def run_simulation(book: OrderBook, agents: list, steps: int) -> tuple[pd.DataFr
                         "TakerOrderID": tr.taker_order_id,
                     })
                     trades_this_step.append(tr)
-
+        '''
             # Notify MarketMakerAS of trades on its orders
             mmAS_agent = next((agent for agent in agents if isinstance(agent, MarketMakerAS)), None)
             for trade in trades:
@@ -270,7 +273,7 @@ def run_simulation(book: OrderBook, agents: list, steps: int) -> tuple[pd.DataFr
                     print(f'MarketMakerAS inventory updated to {mmAS_agent.inventory} after trade {trade}\n')
                     inventory_changes += 1 #For debugging and to decide paramters
                     break
-
+        '''
         #print(f'--------------- Trades happening in time {t} is : {trades_this_step} -----------------')
 
         bb, ba = book.best_bid(), book.best_ask()
@@ -325,7 +328,7 @@ def run_simulation(book: OrderBook, agents: list, steps: int) -> tuple[pd.DataFr
         })
 
         if t % 1 == 0:
-            print(f"t={t}, bb={bb:.4f}, ba={ba:.4f}, spread={sp:.4f}, obi={obi:.4f}, bids : {book.top_n_levels('buy', 10)}, asks : {book.top_n_levels('sell', 10)}")
+            print(f"t={t}, bb={bb:.4f}, ba={ba:.4f}, spread={sp:.4f}, obi={obi:.4f}, bids : {book.top_n_levels('buy', 20)}, asks : {book.top_n_levels('sell', 20)}")
 
         if t % 25 == 0:
             print(f"t={t}, bb={bb:.4f}, ba={ba:.4f}, spread={sp:.4f}, obi={obi:.4f}")
@@ -352,8 +355,8 @@ def main() -> None:
 
     #Seed the order book with some initial liquidity and create agents with distinct RNGs for independent behavior
     rng = np.random.default_rng(42)
-    book = OrderBook(tick=0.01, max_depth_levels=10)
-    seed_initial_book(book, best_bid=100.05, best_ask=100.1, levels=5, rng=rng)
+    book = OrderBook(tick=0.01, max_depth_levels=20)
+    seed_initial_book(book, best_bid=100.05, best_ask=100.1, levels=10, rng=rng)
 
     agents = [
         NoiseTrader(trader_id=1, rng=np.random.default_rng(1)),
@@ -361,7 +364,7 @@ def main() -> None:
         NoiseTrader(trader_id=6, rng=np.random.default_rng(6)),
         MarketMaker(trader_id=2, rng=np.random.default_rng(2)),
         InstitutionalTrader(trader_id=3, rng=np.random.default_rng(3)),
-        MarketMakerAS(trader_id=4, rng=np.random.default_rng(4), horizon=1000, A=1, kappa=10, gamma=0.1, sigma=0.05)
+        #MarketMakerAS(trader_id=4, rng=np.random.default_rng(4), horizon=1000, A=1, kappa=10, gamma=0.1, sigma=0.05)
     ]
     
 
