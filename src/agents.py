@@ -307,6 +307,10 @@ class InstitutionalTrader(BaseAgent):
         :param dark_pool: DarkPool instance to submit to.
         :return: list of Trade objects from dark pool matching, or None.
         """
+
+
+        # TODO: change so that ist trader only sends iceberg orders.
+
         import importlib
         dp_mod = importlib.import_module("src.dark-pool")
         DarkOrder = dp_mod.Order

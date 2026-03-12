@@ -335,7 +335,6 @@ class DarkPool:
 
     def has_order(self) -> bool:
         """
-
         :return: True if there is at least one active (non-canceled) order in either queue, False otherwise.
         """
 
@@ -350,4 +349,9 @@ class DarkPool:
 
         bid_qty = sum(o.qty for o in self._order_index.values() if o.side == "buy")
         ask_qty = sum(o.qty for o in self._order_index.values() if o.side == "sell")
+
+        # edge case checks
+        if bid_qty < 0 or ask_qty < 0:
+            raise ValueError("Negative queue depth detected.")
+
         return bid_qty, ask_qty
