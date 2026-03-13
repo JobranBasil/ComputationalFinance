@@ -1,6 +1,7 @@
 import os
 import sys
 import importlib
+import logging
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -321,6 +322,10 @@ def run_simulation(book: OrderBook, agents: list, dark_pool, steps: int) -> tupl
         if np.isfinite(bb) and np.isfinite(ba) and bb >= ba:
             raise ValueError(f"BOOK CROSSED: best_bid={bb} >= best_ask={ba}")
 
+        # get the dark pool depth and recent trade volume
+        dp_bid_depth, dp_ask_depth = dark_pool.queue_depth()
+        dp_recent_vol = dark_pool.recent_volume(current_ts=t, lookback=20)
+
         book_records.append({
             "t": t,
             "BestBid": bb,
@@ -344,6 +349,10 @@ def run_simulation(book: OrderBook, agents: list, dark_pool, steps: int) -> tupl
             "TradeVolume": step_trade_volume,
             "SignedTradeVolume": step_signed_volume,
             "VWAP": step_vwap,
+            "DPBidDepth": dp_bid_depth,
+            "DPAskDepth": dp_ask_depth,
+            "DPRecentVolume": dp_recent_vol,
+            "DPPendingRoutes": len(dark_pool.pending_lit_routes),
         })
 
         if t % 1 == 0:
@@ -368,6 +377,12 @@ def run_simulation(book: OrderBook, agents: list, dark_pool, steps: int) -> tupl
 
 
 def main() -> None:
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(levelname)s | %(message)s",
+        stream=sys.stdout,
+    )
 
     #Connect directory to ABM_OB_plots
     out_dir = os.path.join(os.path.dirname(__file__), "ABM_OB_plots")
@@ -420,7 +435,7 @@ def main() -> None:
     trades_df.to_csv(os.path.join(out_dir, "trades_log.csv"), index=False)
 
     # Add DP trades to the trades log
-    # dp_trades_df.to_csv(os.path.join(out_dir, "dp_trades_log.csv"), index=False)
+    dp_trades_df.to_csv(os.path.join(out_dir, "dp_trades_log.csv"), index=False)
 
 
 if __name__ == "__main__":

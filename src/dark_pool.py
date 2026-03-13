@@ -89,7 +89,6 @@ class DarkPool:
                     best_ask <= 0,
                     not np.isfinite(best_bid),
                     not np.isfinite(best_ask),
-                    # TODO: check if we want to return nan or the best bid in the case of a crossed market.
                     best_bid >= best_ask
                 ]
         ):
@@ -144,7 +143,7 @@ class DarkPool:
 
     def _match_orders(self, mid_price: float, timestamp: int) -> List[Trade]:
         """
-        FIFO matching engine for the dark pool.
+        'FIFO' matching for the dark pool.
 
         Matches the oldest buy against the oldest sell at the current lit mid price.
         Partially filled orders retain time priority for the next matching round.
@@ -361,7 +360,7 @@ class DarkPool:
 
         self._expire_stale_orders(t)
         self._process_pending_routes(t)
-        logging.debug(
+        logging.info(
             f"--- (DARK POOL) TICK ---: t={t}, active_orders={len(self._order_index)}, "
             f"pending_routes={len(self.pending_lit_routes)}"
         )
