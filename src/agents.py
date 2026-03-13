@@ -30,6 +30,18 @@ class IcebergOrder:
     active_order_id: Optional[int] = None
     active_slice_qty: int = 0  # the qty of the currently posted slice
 
+# @dataclass
+# class DarkIcebergOrder:
+#     """
+#
+#     """
+#     side: Side
+#     remaining: int
+#     peak: int
+#     active_order_id: Optional[int] = None
+#     active_slice_qty: int = 0
+
+
 @dataclass
 class BaseAgent:
     trader_id: int
