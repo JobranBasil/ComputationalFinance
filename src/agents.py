@@ -329,6 +329,12 @@ class InstitutionalTrader(BaseAgent):
         self.total_range = total_range
         self.price_mode = price_mode
 
+        # # net signed inventory: positive = long, negative = short
+        # # used to bias side selection so the trader mean-reverts toward zero
+        # self.inventory: int = 0
+        # # maximum inventory magnitude before side probability is fully skewed
+        # self.inventory_limit: int = 500
+
     def act(self, t: int, book: OrderBook) -> Action:
         # 1) If currently executing iceberg, keep working it
         if self.iceberg is not None:

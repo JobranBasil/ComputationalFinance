@@ -166,7 +166,6 @@ class DarkPool:
         trades: List[Trade] = []
 
         while self.bids and self.asks:
-            # drain any lazily-cancelled orders from the front of each queue
             while self.bids and self.bids[0].order_id in self._cancelled_ids:
                 self._cancelled_ids.discard(self.bids.popleft().order_id)
 
@@ -179,13 +178,13 @@ class DarkPool:
             bid = self.bids[0]
             ask = self.asks[0]
 
-            # self-trade prevention: rotate through asks to find a different counterparty
+            # self-trade prevention: if the best bid and ask belong to the same trader, rotate the asks until a different trader is found or we loop back to the original ask
             if bid.trader_id == ask.trader_id:
                 first_ask_id = ask.order_id
                 self.asks.rotate(-1)
                 while self.asks[0].order_id != first_ask_id and self.asks[0].trader_id == bid.trader_id:
                     self.asks.rotate(-1)
-                # cycled all the way around with no valid counterparty for this bid
+                # no valid counterparty for this bid
                 if self.asks[0].trader_id == bid.trader_id:
                     break
                 continue
@@ -229,13 +228,21 @@ class DarkPool:
         self.pending_lit_routes = [(ts, order) for ts, order in self.pending_lit_routes if current_ts < ts]
 
         for execute_at, lit_order in due:
-            self.lit_orderbook.execute_market(lit_order)
+            lit_trades = self.lit_orderbook.execute_market(lit_order)
+            filled_qty = sum(tr.qty for tr in lit_trades)
+            unfilled_qty = lit_order.qty - filled_qty
             logging.info(
                 f"--- PENDING ROUTE EXECUTED ---: "
                 f"order_id: {lit_order.order_id}, trader_id: {lit_order.trader_id}, "
                 f"side: {lit_order.side}, qty: {lit_order.qty}, "
+                f"filled: {filled_qty}, unfilled: {unfilled_qty}, "
                 f"scheduled_at: {execute_at}, executed_at: {current_ts}"
             )
+            if unfilled_qty > 0:
+                logging.warning(
+                    f"----- PENDING ROUTE PARTIALLY FILLED ----- "
+                    f"order_id: {lit_order.order_id}, unfilled_qty: {unfilled_qty} (lit book too thin)"
+                )
 
     def _expire_stale_orders(self, current_ts: int) -> List[LitOrder]:
         """
@@ -361,6 +368,6 @@ class DarkPool:
         self._expire_stale_orders(t)
         self._process_pending_routes(t)
         logging.info(
-            f"--- (DARK POOL) TICK ---: t={t}, active_orders={len(self._order_index)}, "
+            f"----- DARK POOL TICK ----- t={t}, active_orders={len(self._order_index)}, "
             f"pending_routes={len(self.pending_lit_routes)}"
         )
