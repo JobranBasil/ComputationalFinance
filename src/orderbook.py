@@ -158,6 +158,42 @@ class OrderBook:
         print(f'current NORM Orderbook Imbalance : {norm_imb}')
 
         return norm_imb
+    
+    def get_order_qty(self, order_id: int) -> Optional[int]:
+        loc = self.order_index.get(order_id)
+        if loc is None: return None
+        side, price = loc
+        q = self.bids[price] if side == "buy" else self.asks[price]
+        for o in q:
+            if o.order_id == order_id:
+                return o.qty
+        return None
+    
+    def cancel(self, order_id: int, cancel_qty: Optional[int] = None) -> bool:
+        """
+        Cancel by id. If cancel_qty is None -> cancel full remaining.
+        """
+        if order_id not in self.order_index:
+            return False
+
+        side, price = self.order_index[order_id]
+        book = self.bids if side == "buy" else self.asks
+        q = book.get(price)
+        if q is None:
+            return False
+
+        for o in list(q):
+            if o.order_id == order_id:
+                if cancel_qty is None or cancel_qty >= o.qty:
+                    q.remove(o)
+                    del self.order_index[order_id]
+                else:
+                    o.qty -= cancel_qty
+                self._remove_price_level_if_empty(side, price)
+                return True
+
+        return False
+
 
     # ---------- depth ----------
 
