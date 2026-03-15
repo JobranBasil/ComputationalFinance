@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Union, Tuple, Literal
+from typing import Optional, Union, Tuple, Literal, Dict, List
 import numpy as np
 import math
-import sys
-import os
-from .dark_pool import Order as DarkPoolOrder
 
-from .fundemental import FundamentalProcess
+import mesa
+
 from .orderbook import Order, OrderBook, Side, Trade
+from .dark_pool import Order as DarkPoolOrder
+from .fundemental import FundamentalProcess
 
 Action = Union[None, Order, Tuple[Literal["cancel"], int]]
+
 
 # -------------------- NEW: Iceberg state (strategy-only) --------------------
 @dataclass
@@ -31,26 +32,20 @@ class IcebergOrder:
     active_order_id: Optional[int] = None
     active_slice_qty: int = 0  # the qty of the currently posted slice
 
-# @dataclass
-# class DarkIcebergOrder:
-#     """
-#
-#     """
-#     side: Side
-#     remaining: int
-#     peak: int
-#     active_order_id: Optional[int] = None
-#     active_slice_qty: int = 0
 
+class BaseAgent(mesa.Agent):
+    """
+    Mesa-compatible BaseAgent. Keeps the same interface as the original dataclass.
+    Only change: self.rng -> self.agent_rng (Mesa reserves 'rng').
+    self.trader_id is preserved as an alias for self.unique_id.
+    """
 
-@dataclass
-class BaseAgent:
-    trader_id: int
-    rng: np.random.Generator
-    _next_order_id: int = 1
-
-    # NEW: optional iceberg currently being executed by this agent
-    iceberg: Optional[IcebergOrder] = None
+    def __init__(self, model: mesa.Model, trader_id: int, rng: np.random.Generator):
+        super().__init__(model)
+        self.trader_id = trader_id
+        self.agent_rng = rng
+        self._next_order_id: int = 1
+        self.iceberg: Optional[IcebergOrder] = None
 
     def new_oid(self) -> int:
         oid = self._next_order_id
@@ -61,7 +56,11 @@ class BaseAgent:
     def act(self, t: int, book: OrderBook) -> Action:
         return None
 
-    # -------------------- NEW: iceberg helpers on BaseAgent --------------------
+    # Mesa calls step(); we delegate to act() so original logic stays intact
+    def step(self) -> Action:
+        return self.act(self.model.current_step, self.model.book)
+
+    # -------------------- iceberg helpers on BaseAgent --------------------
     def iceberg_start(self, side: Side, total_qty: int, peak: int, price: float) -> None:
         """
         Start a new iceberg parent order for this agent.
@@ -125,15 +124,16 @@ class BaseAgent:
 
 class NoiseTrader(BaseAgent):
     def __init__(
-        self,
-        trader_id: int,
-        rng: np.random.Generator,
-        participation_rate: float = 0.9,
-        market_prob: float = 0.5,
-        sign_persistence: float = 0.7,
-        max_depth_ticks: int = 10,
+            self,
+            model: mesa.Model,
+            trader_id: int,
+            rng: np.random.Generator,
+            participation_rate: float = 0.9,
+            market_prob: float = 0.5,
+            sign_persistence: float = 0.7,
+            max_depth_ticks: int = 10,
     ):
-        super().__init__(trader_id, rng)
+        super().__init__(model, trader_id, rng)
         self.participation_rate = participation_rate
         self.market_prob = market_prob
         self.sign_persistence = sign_persistence
@@ -143,22 +143,22 @@ class NoiseTrader(BaseAgent):
     def act(self, t: int, book: OrderBook):
 
         # participation decision
-        if self.rng.random() > self.participation_rate:
+        if self.agent_rng.random() > self.participation_rate:
             return None
 
         # persistent order sign
-        if self.last_side is None or self.rng.random() > self.sign_persistence:
-            side: Side = "buy" if self.rng.random() < 0.5 else "sell"
+        if self.last_side is None or self.agent_rng.random() > self.sign_persistence:
+            side: Side = "buy" if self.agent_rng.random() < 0.5 else "sell"
         else:
             side = self.last_side
 
         self.last_side = side
 
-        qty = int(self.rng.integers(10, 20))
-        qty = int(self.rng.integers(10, 20))
+        qty = int(self.agent_rng.integers(10, 20))
+        qty = int(self.agent_rng.integers(10, 20))
 
         # market order
-        if self.rng.random() < self.market_prob:
+        if self.agent_rng.random() < self.market_prob:
             return Order(self.new_oid(), self.trader_id, side, qty, price=None, ts=t)
 
         # limit order around mid
@@ -168,7 +168,7 @@ class NoiseTrader(BaseAgent):
             mid = 100.0
 
         tick = book.tick
-        offset_ticks = int(self.rng.integers(0, self.max_depth_ticks + 1))
+        offset_ticks = int(self.agent_rng.integers(0, self.max_depth_ticks + 1))
 
         if side == "buy":
             px = mid - offset_ticks * tick
@@ -177,19 +177,22 @@ class NoiseTrader(BaseAgent):
 
         return Order(self.new_oid(), self.trader_id, side, qty, price=float(px), ts=t)
 
+
 class MarketMakerAS(BaseAgent):
     """
     Market maker with inventory risk adjusted spread (Avellaneda-Stoikov)
     """
+
     def __init__(self,
+                 model: mesa.Model,
                  trader_id: int,
                  rng: np.random.Generator,
-                 horizon: float, # Time horizon (T)
-                 kappa: float, # Order‐book liquidity parameter (κ)
-                 gamma: float, # Inventory risk aversion (γ)
-                 sigma: float, # Market volatility (σ)
+                 horizon: float,  # Time horizon (T)
+                 kappa: float,  # Order‐book liquidity parameter (κ)
+                 gamma: float,  # Inventory risk aversion (γ)
+                 sigma: float,  # Market volatility (σ)
                  ):
-        super().__init__(trader_id, rng)
+        super().__init__(model, trader_id, rng)
         self.kappa = kappa
         self.gamma = gamma
         self.sigma = sigma
@@ -198,7 +201,7 @@ class MarketMakerAS(BaseAgent):
         self.last_bid_id = None
         self.last_ask_id = None
         self.ttl = 50  # number of ticks before cancellation
-        self.active_orders: dict = {}  
+        self.active_orders: dict = {}
         self.cancel = 0
         self.trades = 0
 
@@ -206,22 +209,21 @@ class MarketMakerAS(BaseAgent):
         """Update inventory based on executed trade."""
         if trade.maker_trader_id == self.trader_id:
             if trade.aggressor_side == "buy":
-                self.inventory -= trade.qty  
+                self.inventory -= trade.qty
             else:
-                self.inventory += trade.qty  
+                self.inventory += trade.qty
         elif trade.taker_trader_id == self.trader_id:
             if trade.aggressor_side == "buy":
-                self.inventory += trade.qty  
+                self.inventory += trade.qty
             else:
-                self.inventory -= trade.qty  
-    
-    
+                self.inventory -= trade.qty
+
     def optimal_spread(self, time_remaining: float) -> float:
         """Calculate optimal spread based on Avellaneda-Stoikov formula."""
-        term1 = self.gamma * self.sigma**2 * time_remaining
+        term1 = self.gamma * self.sigma ** 2 * time_remaining
         term2 = (2.0 / self.gamma) * math.log(1.0 + self.gamma / self.kappa)
         return term1 + term2
-    
+
     def cancel_stale_orders(self, book: OrderBook, actions: list) -> None:
         stale = []
         for oid, info in self.active_orders.items():
@@ -253,17 +255,13 @@ class MarketMakerAS(BaseAgent):
         else:
             mid_price = (bb + ba) / 2
 
-        #Calculate reservation price and optimal quotes
+        # Calculate reservation price and optimal quotes
         time_remaining = max(0.1, 1.0 - t / self.T)
-        rerserve_price = mid_price - self.inventory * self.gamma * self.sigma**2 * time_remaining
+        rerserve_price = mid_price - self.inventory * self.gamma * self.sigma ** 2 * time_remaining
         optimal_spread = self.optimal_spread(time_remaining)
 
         bid_price = rerserve_price - optimal_spread / 2
         ask_price = rerserve_price + optimal_spread / 2
-        #prevent extreme quotes by bounding within a reasonable range around mid
-        #max_offset = 10* book.tick
-        #bid_price = max(bid_price, mid_price - max_offset)
-        #ask_price = min(ask_price, mid_price + max_offset)
 
         # prevent bid above best ask or ask below best bid
         if bid_price >= ba:
@@ -276,15 +274,14 @@ class MarketMakerAS(BaseAgent):
             bid_price = mid_price - book.tick
             ask_price = mid_price + book.tick
 
-        print(f"MarketMakerAS act: t={t}, inventory={self.inventory}, mid={mid_price:.2f}, bid_px={bid_price:.2f}, ask_px={ask_price:.2f}")
+        print(
+            f"MarketMakerAS act: t={t}, inventory={self.inventory}, mid={mid_price:.2f}, bid_px={bid_price:.2f}, ask_px={ask_price:.2f}")
 
         qty = 20
-        #Update and quote the side that got filled or cancelled
+        # Update and quote the side that got filled or cancelled
         post_bid = self.last_bid_id is None
         post_ask = self.last_ask_id is None
-        
-        #post_bid = True
-        #post_ask = True 
+
         if post_bid:
             bid = Order(self.new_oid(), self.trader_id, "buy", qty, price=bid_price, ts=t)
             actions.append(bid)
@@ -294,7 +291,7 @@ class MarketMakerAS(BaseAgent):
                 "age": 0,
                 "qty": qty}
             self.last_bid_id = bid.order_id
-    
+
         if post_ask:
             ask = Order(self.new_oid(), self.trader_id, "sell", qty, price=ask_price, ts=t)
             actions.append(ask)
@@ -317,13 +314,10 @@ class MarketMaker(BaseAgent):
     """
 
     def act(self, t: int, book: OrderBook) -> Action:
-        #if self.rng.random() > 0.9:
-            #return None
-
-        r = self.rng.random()
+        r = self.agent_rng.random()
 
         side: Side = "buy" if r < 0.55 else "sell"
-        qty = int(self.rng.integers(1, 10))
+        qty = int(self.agent_rng.integers(1, 10))
         bb, ba = book.best_bid(), book.best_ask()
 
         # limit order around mid
@@ -332,7 +326,7 @@ class MarketMaker(BaseAgent):
             mid = 100.0
 
         tick = book.tick
-        offset_ticks = int(self.rng.integers(0, 10))
+        offset_ticks = int(self.agent_rng.integers(0, 10))
 
         if side == "buy":
             px = mid - offset_ticks * tick
@@ -343,24 +337,18 @@ class MarketMaker(BaseAgent):
 
 
 class InstitutionalTrader(BaseAgent):
-    def __init__(self, trader_id: int, rng: np.random.Generator,
+    def __init__(self, model: mesa.Model, trader_id: int, rng: np.random.Generator,
                  participation_rate: float = 0.05,
                  use_iceberg_prob: float = 0.8,
                  peak_range=(30, 50),
                  total_range=(100, 150),
                  price_mode: str = "join"):  # "join" or "improve"
-        super().__init__(trader_id, rng)
+        super().__init__(model, trader_id, rng)
         self.participation_rate = participation_rate
         self.use_iceberg_prob = use_iceberg_prob
         self.peak_range = peak_range
         self.total_range = total_range
         self.price_mode = price_mode
-
-        # # net signed inventory: positive = long, negative = short
-        # # used to bias side selection so the trader mean-reverts toward zero
-        # self.inventory: int = 0
-        # # maximum inventory magnitude before side probability is fully skewed
-        # self.inventory_limit: int = 500
 
     def act(self, t: int, book: OrderBook) -> Action:
         # 1) If currently executing iceberg, keep working it
@@ -368,18 +356,18 @@ class InstitutionalTrader(BaseAgent):
             return self.iceberg_step(t, book)
 
         # 2) Decide whether to initiate a parent order
-        if self.rng.random() > self.participation_rate:
+        if self.agent_rng.random() > self.participation_rate:
             return None
 
-        side: Side = "buy" if self.rng.random() < 0.5 else "sell"
-        total_qty = int(self.rng.integers(self.total_range[0], self.total_range[1] + 1))
+        side: Side = "buy" if self.agent_rng.random() < 0.5 else "sell"
+        total_qty = int(self.agent_rng.integers(self.total_range[0], self.total_range[1] + 1))
 
         # If you don't have quotes, just skip
         bb, ba = book.best_bid(), book.best_ask()
         if bb <= 0 or not np.isfinite(ba):
             return None
 
-        peak = int(self.rng.integers(self.peak_range[0], self.peak_range[1] + 1))
+        peak = int(self.agent_rng.integers(self.peak_range[0], self.peak_range[1] + 1))
 
         # price selection (simple)
         if side == "buy":
@@ -388,7 +376,7 @@ class InstitutionalTrader(BaseAgent):
             px = ba if self.price_mode == "join" else max(ba - book.tick, bb + book.tick)
 
         # 3) Choose iceberg vs one-shot market
-        if self.rng.random() < self.use_iceberg_prob:
+        if self.agent_rng.random() < self.use_iceberg_prob:
             self.iceberg_start(side=side, total_qty=total_qty, peak=peak, price=px)
             print('--------------------- ICEBERG PLACED --------------------------')
             return self.iceberg_step(t, book)  # post first slice
@@ -408,11 +396,11 @@ class InstitutionalTrader(BaseAgent):
         :return: list of Trade objects from dark pool matching, or None.
         """
 
-        if self.rng.random() > 0.05:
+        if self.agent_rng.random() > 0.05:
             return None
 
-        side: Side = "buy" if self.rng.random() < 0.5 else "sell"
-        qty = int(self.rng.integers(self.total_range[0], self.total_range[1] + 1))
+        side: Side = "buy" if self.agent_rng.random() < 0.5 else "sell"
+        qty = int(self.agent_rng.integers(self.total_range[0], self.total_range[1] + 1))
         order = DarkPoolOrder(
             order_id=self.new_oid(),
             trader_id=self.trader_id,
@@ -421,21 +409,24 @@ class InstitutionalTrader(BaseAgent):
             ts=t,
         )
         return dark_pool.submit_order(order)
+
+
 class InformedTrader(BaseAgent):
     def __init__(
-        self,
-        trader_id: int,
-        rng: np.random.Generator,
-        fundamental: FundamentalProcess,   # shared external process
-        sigma_s: float = 0.10,
-        entry_threshold: float = 0.05,
-        aggressive_threshold: float = 0.20,
-        base_qty: int = 10,
-        max_qty: int = 50,
-        participation_rate: float = 0.8,
+            self,
+            model: mesa.Model,
+            trader_id: int,
+            rng: np.random.Generator,
+            fundamental: FundamentalProcess,  # shared external process
+            sigma_s: float = 0.10,
+            entry_threshold: float = 0.05,
+            aggressive_threshold: float = 0.20,
+            base_qty: int = 10,
+            max_qty: int = 50,
+            participation_rate: float = 0.8,
     ):
-        super().__init__(trader_id, rng)
-        self.fundamental = fundamental        # shared reference
+        super().__init__(model, trader_id, rng)
+        self.fundamental = fundamental  # shared reference
         self.sigma_s = sigma_s
         self.entry_threshold = entry_threshold
         self.aggressive_threshold = aggressive_threshold
@@ -448,10 +439,10 @@ class InformedTrader(BaseAgent):
         return max(1, int(self.base_qty + scale * (self.max_qty - self.base_qty)))
 
     def act(self, t: int, book: OrderBook) -> Action:
-        if self.rng.random() > self.participation_rate:
+        if self.agent_rng.random() > self.participation_rate:
             return None
 
-        signal = self.fundamental.observe(self.sigma_s, self.rng)
+        signal = self.fundamental.observe(self.sigma_s, self.agent_rng)
         mid = book.mid_price()
         if not np.isfinite(mid):
             mid = self.fundamental.value
