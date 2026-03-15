@@ -4,8 +4,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from .fundemental import FundamentalProcess
 from .orderbook import OrderBook, Order
-from .agents import NoiseTrader, MarketMaker, InstitutionalTrader, MarketMakerAS, Action
+from .agents import NoiseTrader, MarketMaker, InstitutionalTrader, MarketMakerAS, Action, InformedTrader
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +238,7 @@ def plot_mmAS_inventory(book_df: pd.DataFrame, out_path: str) -> None:
 # Simulation
 # ---------------------------------------------------------------------------
 
-def run_simulation(book: OrderBook, agents: list, steps: int) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[dict]]:
+def run_simulation(book: OrderBook, agents: list, steps: int,fundamental=None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[dict]]:
     order_records = []
     book_records = []
     trade_records = []
@@ -248,6 +249,7 @@ def run_simulation(book: OrderBook, agents: list, steps: int) -> tuple[pd.DataFr
 
     for t in range(steps):
         print(f"\nTIME STEP : {t}\n")
+        fundamental.step()   # <-- add this at the top of the loop
 
         trades_this_step = []
 
@@ -369,10 +371,36 @@ def run_simulation(book: OrderBook, agents: list, steps: int) -> tuple[pd.DataFr
         pd.DataFrame(trade_records),
         snapshots,
     )
+# In simulation.py
+
+def plot_mid_vs_fundamental(book_df: pd.DataFrame, fundamental_history: list[float], out_path: str) -> None:
+    """Plot mid-price vs fundamental value over simulation time."""
+    fig, ax = plt.subplots(figsize=(14, 5))
+
+    ax.plot(book_df["t"], book_df["Mid"], label="Mid Price", color="steelblue", linewidth=1.2)
+    ax.plot(book_df["t"], fundamental_history[:len(book_df)], label="Fundamental Value",
+            color="crimson", linewidth=1.2, linestyle="--")
+
+    ax.fill_between(
+        book_df["t"],
+        book_df["Mid"],
+        fundamental_history[:len(book_df)],
+        alpha=0.15,
+        color="purple",
+        label="Mispricing",
+    )
+
+    ax.set_title("Mid Price vs Fundamental Value")
+    ax.set_xlabel("Time Step")
+    ax.set_ylabel("Price")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
 
 
 def main() -> None:
-
+    fundamental = FundamentalProcess(start=100.075, sigma_v=0.03, rng=np.random.default_rng(99))
     #Connect directory to ABM_OB_plots
     out_dir = os.path.join(os.path.dirname(__file__), "ABM_OB_plots")
     os.makedirs(out_dir, exist_ok=True)
@@ -388,12 +416,14 @@ def main() -> None:
         NoiseTrader(trader_id=6, rng=np.random.default_rng(6)),
         MarketMaker(trader_id=2, rng=np.random.default_rng(2)),
         InstitutionalTrader(trader_id=3, rng=np.random.default_rng(3)),
+        InformedTrader(trader_id=7, rng=np.random.default_rng(7), fundamental=fundamental,
+                   sigma_s=0.08, participation_rate=0.5),
         MarketMakerAS(trader_id=4, rng=np.random.default_rng(4), horizon= 5000, kappa=50, gamma=0.1, sigma=0.05)
     ]
     
 
     #Get the order and book logs, and periodic snapshots of the order book state for visualization
-    orders_df, book_df, trades_df, snapshots = run_simulation(book, agents, steps=5000)
+    orders_df, book_df, trades_df, snapshots = run_simulation(book, agents, steps=1000, fundamental=fundamental)
     book_df = add_market_analytics(book_df, vol_window=10)
 
     #Plot each time series and save the order book snapshots and demand curve at the end of the simulation
@@ -402,6 +432,11 @@ def main() -> None:
     plot_series(book_df["OBI"],    "Orderbook Imbalance", os.path.join(out_dir, "obi.png"))
     plot_series(book_df["VWAP"],    "Volume-Weighted Average Price (VWAP)", os.path.join(out_dir, "vwap.png"))
     plot_mmAS_inventory(book_df, os.path.join(out_dir, "mmAS_inventory.png"))
+    plot_mid_vs_fundamental(
+    book_df,
+    fundamental.history,
+    os.path.join(out_dir, "mid_vs_fundamental.png")
+)
 
     if snapshots:
         plot_snapshots(snapshots, os.path.join(out_dir, "ABM_OrderBook_Snapshots.png"))
