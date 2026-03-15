@@ -6,12 +6,21 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from .fundemental import FundamentalProcess
 from .orderbook import OrderBook, Order
-from .agents import NoiseTrader, MarketMaker, InstitutionalTrader, MarketMakerAS, Action
+from .agents import (
+    NoiseTrader,
+    MarketMaker,
+    InstitutionalTrader,
+    MarketMakerAS,
+    InformedTrader,
+    Action,
+)
 
 _dp_mod = importlib.import_module("src.dark_pool")
 DarkPool = _dp_mod.DarkPool
 DarkOrder = _dp_mod.Order
+
 
 # ---------------------------------------------------------------------------
 # Order book helpers
@@ -37,6 +46,7 @@ def apply_action(book: OrderBook, action: Action | list) -> list:
 
     raise TypeError(f"Unknown action type: {type(action)}")
 
+
 def seed_initial_book(
     book: OrderBook,
     best_bid: float = 100.0,
@@ -48,12 +58,20 @@ def seed_initial_book(
     rng = rng or np.random.default_rng(42)
     for i in range(levels):
         book.add_limit_post_only(Order(
-            order_id=10_000 + i, trader_id=-1, side="buy",
-            qty=int(rng.integers(1, 10)), price=best_bid - book.tick * i, ts=0,
+            order_id=10_000 + i,
+            trader_id=-1,
+            side="buy",
+            qty=int(rng.integers(1, 10)),
+            price=best_bid - book.tick * i,
+            ts=0,
         ))
         book.add_limit_post_only(Order(
-            order_id=20_000 + i, trader_id=-1, side="sell",
-            qty=int(rng.integers(1, 10)), price=best_ask + book.tick * i, ts=0,
+            order_id=20_000 + i,
+            trader_id=-1,
+            side="sell",
+            qty=int(rng.integers(1, 10)),
+            price=best_ask + book.tick * i,
+            ts=0,
         ))
 
 
@@ -79,10 +97,12 @@ def top_n_depth(book: OrderBook, n: int = 5) -> tuple[int, int]:
     ask_depth = sum(q for _, q in book.top_n_levels("sell", n))
     return bid_depth, ask_depth
 
+
 def top_n_obi(book: OrderBook, n: int = 5) -> float:
     bid_depth, ask_depth = top_n_depth(book, n)
     denom = bid_depth + ask_depth
     return (bid_depth - ask_depth) / denom if denom > 0 else 0.0
+
 
 def microprice(book: OrderBook) -> float:
     bb, ba = book.best_bid(), book.best_ask()
@@ -96,6 +116,7 @@ def microprice(book: OrderBook) -> float:
         return np.nan
 
     return (ba * qb + bb * qa) / denom
+
 
 def trade_volume(trades: list) -> int:
     return sum(tr.qty for tr in trades)
@@ -123,15 +144,8 @@ def add_market_analytics(book_df: pd.DataFrame, vol_window: int = 10) -> pd.Data
     df["SpreadChange"] = df["Spread"].diff()
     df["MicropriceReturn"] = df["Microprice"].diff()
 
-    '''
-    # simple impact proxy
-    df["ImpactProxy"] = np.where(
-        df["TradeVolume"] > 0,
-        df["MidReturn"].abs() / df["TradeVolume"],
-        np.nan,
-    )
-    '''
     return df
+
 
 # ---------------------------------------------------------------------------
 # Plotting
@@ -152,14 +166,13 @@ def plot_snapshots(snapshots: list[dict], out_path: str) -> None:
     if len(snapshots) == 1:
         axes = [axes]
 
-    # Fixed half-width in price units across all snapshots
-    #try:
-      #  tick = snapshots[0]["bids"][0][0] - snapshots[0]["bids"][1][0]
-    #except IndexError:
-     #   tick = 0.01
-    tick = snapshots[0]["bids"][0][0] - snapshots[0]["bids"][1][0]
-    bar_width = tick * 0.1
-    half_width = tick * 5  # controls how many levels are visible — adjust as needed
+    # safer tick handling
+    tick = 0.01
+    if snapshots and len(snapshots[0].get("bids", [])) >= 2:
+        tick = abs(snapshots[0]["bids"][0][0] - snapshots[0]["bids"][1][0]) or 0.01
+
+    bar_width = tick * 0.4
+    half_width = tick * 22
 
     for ax, snap in zip(axes, snapshots):
         bids = snap["bids"]
@@ -179,7 +192,6 @@ def plot_snapshots(snapshots: list[dict], out_path: str) -> None:
 
         ax.axhline(0, linewidth=1)
 
-        # only draw mid / set xlim if both sides exist
         if bids and asks:
             mid = (ask_prices[0] + bid_prices[0]) / 2
             ax.axvline(mid, linewidth=1, color="black", linestyle="--")
@@ -218,11 +230,92 @@ def plot_demand_curve(bids: list[tuple], asks: list[tuple], out_path: str) -> No
     fig.savefig(out_path)
     plt.close(fig)
 
+
+def plot_mmAS_inventory(book_df: pd.DataFrame, out_path: str) -> None:
+    """Plot MarketMakerAS inventory over simulation time."""
+    if "MMAS_Inventory" not in book_df.columns:
+        print("No MMAS_Inventory column found in book_df — skipping plot.")
+        return
+
+    fig, ax = plt.subplots(figsize=(12, 4))
+    ax.plot(book_df["t"], book_df["MMAS_Inventory"], label="MMAS Inventory", color="steelblue")
+    ax.axhline(0, color="black", linewidth=0.8, linestyle="--", label="Zero inventory")
+    ax.fill_between(
+        book_df["t"],
+        book_df["MMAS_Inventory"],
+        0,
+        where=book_df["MMAS_Inventory"] > 0,
+        alpha=0.2,
+        color="green",
+        label="Long",
+    )
+    ax.fill_between(
+        book_df["t"],
+        book_df["MMAS_Inventory"],
+        0,
+        where=book_df["MMAS_Inventory"] < 0,
+        alpha=0.2,
+        color="red",
+        label="Short",
+    )
+    ax.set_title("MarketMakerAS Inventory Over Time")
+    ax.set_xlabel("Time Step")
+    ax.set_ylabel("Inventory")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
+def plot_mid_vs_fundamental(
+    book_df: pd.DataFrame,
+    fundamental_history: list[float],
+    out_path: str,
+) -> None:
+    """Plot mid-price vs fundamental value over simulation time."""
+    fig, ax = plt.subplots(figsize=(14, 5))
+
+    fund_series = fundamental_history[:len(book_df)]
+
+    ax.plot(book_df["t"], book_df["Mid"], label="Mid Price", color="steelblue", linewidth=1.2)
+    ax.plot(
+        book_df["t"],
+        fund_series,
+        label="Fundamental Value",
+        color="crimson",
+        linewidth=1.2,
+        linestyle="--",
+    )
+
+    ax.fill_between(
+        book_df["t"],
+        book_df["Mid"],
+        fund_series,
+        alpha=0.15,
+        color="purple",
+        label="Mispricing",
+    )
+
+    ax.set_title("Mid Price vs Fundamental Value")
+    ax.set_xlabel("Time Step")
+    ax.set_ylabel("Price")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
 # ---------------------------------------------------------------------------
 # Simulation
 # ---------------------------------------------------------------------------
 
-def run_simulation(book: OrderBook, agents: list, dark_pool, steps: int) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, list[dict]]:
+def run_simulation(
+    book: OrderBook,
+    agents: list,
+    dark_pool,
+    steps: int,
+    fundamental=None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, list[dict]]:
     order_records = []
     book_records = []
     trade_records = []
@@ -230,20 +323,23 @@ def run_simulation(book: OrderBook, agents: list, dark_pool, steps: int) -> tupl
     snapshots = []
     rng = np.random.default_rng(42)
 
+    inventory_changes = 0
+
     for t in range(steps):
         print(f"\nTIME STEP : {t}\n")
+
+        if fundamental is not None:
+            fundamental.step()
 
         trades_this_step = []
 
         for agent in agents:
-
             if isinstance(agent, MarketMaker):
                 n_actions = int(rng.integers(1, 4))
             else:
                 n_actions = 1
 
             for _ in range(n_actions):
-
                 action = agent.act(t, book)
                 print(action)
                 trades = apply_action(book, action)
@@ -280,21 +376,30 @@ def run_simulation(book: OrderBook, agents: list, dark_pool, steps: int) -> tupl
                             "Qty": tr.qty,
                         })
 
+        # Notify MarketMakerAS of fills
+        mmAS_agent = next((agent for agent in agents if isinstance(agent, MarketMakerAS)), None)
+        for trade in trades_this_step:
+            if mmAS_agent is not None:
+                if (
+                    trade.maker_trader_id == mmAS_agent.trader_id
+                    or trade.taker_trader_id == mmAS_agent.trader_id
+                ):
+                    mmAS_agent.update_inventory(trade)
+                    inventory_changes += 1
+
+                    if (
+                        trade.maker_order_id == mmAS_agent.last_bid_id
+                        or trade.taker_order_id == mmAS_agent.last_bid_id
+                    ):
+                        mmAS_agent.last_bid_id = None
+                    elif (
+                        trade.maker_order_id == mmAS_agent.last_ask_id
+                        or trade.taker_order_id == mmAS_agent.last_ask_id
+                    ):
+                        mmAS_agent.last_ask_id = None
+
         # advance dark pool clock, expiry and routing fire here
         dark_pool.tick(t)
-
-
-        '''
-            # Notify MarketMakerAS of trades on its orders
-            mmAS_agent = next((agent for agent in agents if isinstance(agent, MarketMakerAS)), None)
-            for trade in trades:
-                if trade.maker_trader_id == mmAS_agent.trader_id or trade.taker_trader_id == mmAS_agent.trader_id:
-                    mmAS_agent.update_inventory(trade)
-                    print(f'MarketMakerAS inventory updated to {mmAS_agent.inventory} after trade {trade}\n')
-                    inventory_changes += 1 #For debugging and to decide paramters
-                    break
-        '''
-        #print(f'--------------- Trades happening in time {t} is : {trades_this_step} -----------------')
 
         bb, ba = book.best_bid(), book.best_ask()
         sp = book.spread()
@@ -312,8 +417,8 @@ def run_simulation(book: OrderBook, agents: list, dark_pool, steps: int) -> tupl
         step_signed_volume = signed_trade_volume(trades_this_step)
         step_vwap = vwap(trades_this_step)
 
-        #print(f'Inventory changes for MMAS/Trades made: {inventory_changes}')
-        
+        print(f"Inventory changes for MMAS/Trades made: {inventory_changes}")
+
         if not np.isfinite(bb):
             print(f"WARNING: bid book empty at t={t}")
         if not np.isfinite(ba):
@@ -322,7 +427,6 @@ def run_simulation(book: OrderBook, agents: list, dark_pool, steps: int) -> tupl
         if np.isfinite(bb) and np.isfinite(ba) and bb >= ba:
             raise ValueError(f"BOOK CROSSED: best_bid={bb} >= best_ask={ba}")
 
-        # get the dark pool depth and recent trade volume
         dp_bid_depth, dp_ask_depth = dark_pool.queue_depth()
         dp_recent_vol = dark_pool.recent_volume(current_ts=t, lookback=20)
 
@@ -349,6 +453,7 @@ def run_simulation(book: OrderBook, agents: list, dark_pool, steps: int) -> tupl
             "TradeVolume": step_trade_volume,
             "SignedTradeVolume": step_signed_volume,
             "VWAP": step_vwap,
+            "MMAS_Inventory": mmAS_agent.inventory if mmAS_agent is not None else 0,
             "DPBidDepth": dp_bid_depth,
             "DPAskDepth": dp_ask_depth,
             "DPRecentVolume": dp_recent_vol,
@@ -356,7 +461,10 @@ def run_simulation(book: OrderBook, agents: list, dark_pool, steps: int) -> tupl
         })
 
         if t % 1 == 0:
-            print(f"t={t}, bb={bb:.4f}, ba={ba:.4f}, spread={sp:.4f}, obi={obi:.4f}, bids : {book.top_n_levels('buy', 20)}, asks : {book.top_n_levels('sell', 20)}")
+            print(
+                f"t={t}, bb={bb:.4f}, ba={ba:.4f}, spread={sp:.4f}, obi={obi:.4f}, "
+                f"bids : {book.top_n_levels('buy', 20)}, asks : {book.top_n_levels('sell', 20)}"
+            )
 
         if t % 25 == 0:
             print(f"t={t}, bb={bb:.4f}, ba={ba:.4f}, spread={sp:.4f}, obi={obi:.4f}")
@@ -365,7 +473,6 @@ def run_simulation(book: OrderBook, agents: list, dark_pool, steps: int) -> tupl
                 "bids": book.top_n_levels("buy", 10),
                 "asks": book.top_n_levels("sell", 10),
             })
-
 
     return (
         pd.DataFrame(order_records),
@@ -377,21 +484,24 @@ def run_simulation(book: OrderBook, agents: list, dark_pool, steps: int) -> tupl
 
 
 def main() -> None:
-
     logging.basicConfig(
         level=logging.INFO,
         format="%(levelname)s | %(message)s",
         stream=sys.stdout,
     )
 
-    #Connect directory to ABM_OB_plots
+    fundamental = FundamentalProcess(
+        start=100.075,
+        sigma_v=0.03,
+        rng=np.random.default_rng(99),
+    )
+
     out_dir = os.path.join(os.path.dirname(__file__), "ABM_OB_plots")
     os.makedirs(out_dir, exist_ok=True)
 
-    #Seed the order book with some initial liquidity and create agents with distinct RNGs for independent behavior
     rng = np.random.default_rng(42)
     book = OrderBook(tick=0.01, max_depth_levels=20)
-    seed_initial_book(book, best_bid=100.05, best_ask=100.1, levels=10, rng=rng)
+    seed_initial_book(book, best_bid=100.05, best_ask=100.10, levels=10, rng=rng)
 
     agents = [
         NoiseTrader(trader_id=1, rng=np.random.default_rng(1)),
@@ -399,10 +509,24 @@ def main() -> None:
         NoiseTrader(trader_id=6, rng=np.random.default_rng(6)),
         MarketMaker(trader_id=2, rng=np.random.default_rng(2)),
         InstitutionalTrader(trader_id=3, rng=np.random.default_rng(3)),
-        InstitutionalTrader(trader_id=4, rng=np.random.default_rng(4)),
+        InstitutionalTrader(trader_id=8, rng=np.random.default_rng(8)),
+        InformedTrader(
+            trader_id=7,
+            rng=np.random.default_rng(7),
+            fundamental=fundamental,
+            sigma_s=0.08,
+            participation_rate=0.5,
+        ),
+        MarketMakerAS(
+            trader_id=4,
+            rng=np.random.default_rng(4),
+            horizon=5000,
+            kappa=50,
+            gamma=0.1,
+            sigma=0.05,
+        ),
     ]
 
-    # instantiate the dark pool with the lit order book
     dark_pool = DarkPool(
         lit_orderbook=book,
         max_resting_ticks=50,
@@ -410,34 +534,45 @@ def main() -> None:
         tape_delay=5,
     )
 
-    #Get the order and book logs, and periodic snapshots of the order book state for visualization
-    orders_df, book_df, trades_df, dp_trades_df, snapshots = run_simulation(book, agents, dark_pool, steps=2500)
+    orders_df, book_df, trades_df, dp_trades_df, snapshots = run_simulation(
+        book,
+        agents,
+        dark_pool,
+        steps=1000,
+        fundamental=fundamental,
+    )
+
     book_df = add_market_analytics(book_df, vol_window=10)
 
-    #Plot each time series and save the order book snapshots and demand curve at the end of the simulation
-    plot_series(book_df["Spread"],        "Spread",                                  os.path.join(out_dir, "spread.png"))
-    plot_series(book_df["Mid"],           "Mid-price diffusion",                     os.path.join(out_dir, "mid.png"))
-    plot_series(book_df["OBI"],           "Orderbook Imbalance",                     os.path.join(out_dir, "obi.png"))
-    plot_series(book_df["VWAP"],          "Volume-Weighted Average Price (VWAP)",    os.path.join(out_dir, "vwap.png"))
-    plot_series(book_df["DPRecentVolume"],"Dark Pool: Recent Traded Volume (20-tick)",os.path.join(out_dir, "dp_volume.png"))
+    plot_series(book_df["Spread"], "Spread", os.path.join(out_dir, "spread.png"))
+    plot_series(book_df["Mid"], "Mid-price diffusion", os.path.join(out_dir, "mid.png"))
+    plot_series(book_df["OBI"], "Orderbook Imbalance", os.path.join(out_dir, "obi.png"))
+    plot_series(book_df["VWAP"], "Volume-Weighted Average Price (VWAP)", os.path.join(out_dir, "vwap.png"))
+    plot_series(
+        book_df["DPRecentVolume"],
+        "Dark Pool: Recent Traded Volume (20-tick)",
+        os.path.join(out_dir, "dp_volume.png"),
+    )
+
+    plot_mmAS_inventory(book_df, os.path.join(out_dir, "mmAS_inventory.png"))
+    plot_mid_vs_fundamental(
+        book_df,
+        fundamental.history,
+        os.path.join(out_dir, "mid_vs_fundamental.png"),
+    )
 
     if snapshots:
         plot_snapshots(snapshots, os.path.join(out_dir, "ABM_OrderBook_Snapshots.png"))
 
-    #Get the demand curve at the end of the simulation and save it
     final_bids = book.top_n_levels("buy", 20)
     final_asks = book.top_n_levels("sell", 20)
     plot_demand_curve(final_bids, final_asks, os.path.join(out_dir, "demand_curve.png"))
 
-    #Save the order and book logs as CSV files for further analysis
     orders_df.to_csv(os.path.join(out_dir, "orders_log.csv"), index=False)
     book_df.to_csv(os.path.join(out_dir, "book_log.csv"), index=False)
     trades_df.to_csv(os.path.join(out_dir, "trades_log.csv"), index=False)
-
-    # Add DP trades to the trades log
     dp_trades_df.to_csv(os.path.join(out_dir, "dp_trades_log.csv"), index=False)
 
 
 if __name__ == "__main__":
     main()
-

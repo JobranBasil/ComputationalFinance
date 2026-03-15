@@ -8,6 +8,7 @@ import sys
 import os
 from .dark_pool import Order as DarkPoolOrder
 
+from .fundemental import FundamentalProcess
 from .orderbook import Order, OrderBook, Side, Trade
 
 Action = Union[None, Order, Tuple[Literal["cancel"], int]]
@@ -130,7 +131,7 @@ class NoiseTrader(BaseAgent):
         participation_rate: float = 0.9,
         market_prob: float = 0.5,
         sign_persistence: float = 0.7,
-        max_depth_ticks: int = 20,
+        max_depth_ticks: int = 10,
     ):
         super().__init__(trader_id, rng)
         self.participation_rate = participation_rate
@@ -153,6 +154,7 @@ class NoiseTrader(BaseAgent):
 
         self.last_side = side
 
+        qty = int(self.rng.integers(10, 20))
         qty = int(self.rng.integers(10, 20))
 
         # market order
@@ -182,8 +184,7 @@ class MarketMakerAS(BaseAgent):
     def __init__(self,
                  trader_id: int,
                  rng: np.random.Generator,
-                 horizon: float, # Time horizon
-                 A: float, # Baseline arrival rate
+                 horizon: float, # Time horizon (T)
                  kappa: float, # Order‐book liquidity parameter (κ)
                  gamma: float, # Inventory risk aversion (γ)
                  sigma: float, # Market volatility (σ)
@@ -194,52 +195,56 @@ class MarketMakerAS(BaseAgent):
         self.sigma = sigma
         self.T = horizon
         self.inventory = 0
-        self.A = A
         self.last_bid_id = None
         self.last_ask_id = None
-        self.ttl = 50  # number of time steps before cancellation
-        self.bid_age = 0
-        self.ask_age = 0
+        self.ttl = 50  # number of ticks before cancellation
+        self.active_orders: dict = {}  
+        self.cancel = 0
+        self.trades = 0
 
     def update_inventory(self, trade: Trade):
         """Update inventory based on executed trade."""
         if trade.maker_trader_id == self.trader_id:
             if trade.aggressor_side == "buy":
-                self.inventory -= trade.qty
+                self.inventory -= trade.qty  
             else:
-                self.inventory += trade.qty
+                self.inventory += trade.qty  
         elif trade.taker_trader_id == self.trader_id:
             if trade.aggressor_side == "buy":
-                self.inventory += trade.qty
+                self.inventory += trade.qty  
             else:
-                self.inventory -= trade.qty
-
+                self.inventory -= trade.qty  
+    
+    
     def optimal_spread(self, time_remaining: float) -> float:
         """Calculate optimal spread based on Avellaneda-Stoikov formula."""
         term1 = self.gamma * self.sigma**2 * time_remaining
         term2 = (2.0 / self.gamma) * math.log(1.0 + self.gamma / self.kappa)
         return term1 + term2
+    
+    def cancel_stale_orders(self, book: OrderBook, actions: list) -> None:
+        stale = []
+        for oid, info in self.active_orders.items():
+            info["age"] += 1
+            if oid not in book.order_index:
+                # disappeared - filled OR pruned, just free the slot
+                stale.append(oid)
+
+            elif info["age"] >= self.ttl:
+                actions.append(("cancel", oid))
+                stale.append(oid)
+                self.cancel += 1
+
+        for oid in stale:
+            info = self.active_orders.pop(oid)
+            if info["side"] == "buy":
+                self.last_bid_id = None
+            else:
+                self.last_ask_id = None
 
     def act(self, t: int, book: OrderBook) -> Action:
         actions = []
-
-        # Cancel bid if too old
-        if self.last_bid_id is not None:
-            self.ask_age += 1
-            if self.bid_age >= self.ttl:
-                actions.append(("cancel", self.last_bid_id))
-                self.last_bid_id = None
-                self.bid_age = 0
-
-
-        # Cancel ask if too old
-        if self.last_ask_id is not None:
-            self.ask_age += 1
-            if self.ask_age >= self.ttl:
-                actions.append(("cancel", self.last_ask_id))
-                self.last_ask_id = None
-                self.ask_age = 0
-
+        self.cancel_stale_orders(book, actions)
 
         # Calculate mid-price and optimal spread
         bb, ba = book.best_bid(), book.best_ask()
@@ -249,35 +254,57 @@ class MarketMakerAS(BaseAgent):
             mid_price = (bb + ba) / 2
 
         #Calculate reservation price and optimal quotes
-        time_remaining = max(0.0, 1.0 - t / self.T)
+        time_remaining = max(0.1, 1.0 - t / self.T)
         rerserve_price = mid_price - self.inventory * self.gamma * self.sigma**2 * time_remaining
         optimal_spread = self.optimal_spread(time_remaining)
 
         bid_price = rerserve_price - optimal_spread / 2
         ask_price = rerserve_price + optimal_spread / 2
+        #prevent extreme quotes by bounding within a reasonable range around mid
+        #max_offset = 10* book.tick
+        #bid_price = max(bid_price, mid_price - max_offset)
+        #ask_price = min(ask_price, mid_price + max_offset)
 
-        # prevent extreme quotes by bounding within a reasonable range around mid
-        max_offset = 50 * book.tick
-        bid_price = max(bid_price, mid_price - max_offset)
-        ask_price = min(ask_price, mid_price + max_offset)
+        # prevent bid above best ask or ask below best bid
+        if bid_price >= ba:
+            bid_price = ba - book.tick
+        if ask_price <= bb:
+            ask_price = bb + book.tick
+
+        # prevent crossed quotes
+        if bid_price >= ask_price:
+            bid_price = mid_price - book.tick
+            ask_price = mid_price + book.tick
 
         print(f"MarketMakerAS act: t={t}, inventory={self.inventory}, mid={mid_price:.2f}, bid_px={bid_price:.2f}, ask_px={ask_price:.2f}")
 
-        qty = 1
-        #Quote both sides every tick
-        post_bid = True
-        post_ask = True
+        qty = 20
+        #Update and quote the side that got filled or cancelled
+        post_bid = self.last_bid_id is None
+        post_ask = self.last_ask_id is None
+        
+        #post_bid = True
+        #post_ask = True 
         if post_bid:
             bid = Order(self.new_oid(), self.trader_id, "buy", qty, price=bid_price, ts=t)
             actions.append(bid)
+            self.active_orders[bid.order_id] = {
+                "side": "buy",
+                "price": bid_price,
+                "age": 0,
+                "qty": qty}
             self.last_bid_id = bid.order_id
-            self.bid_age = 0
-
+    
         if post_ask:
             ask = Order(self.new_oid(), self.trader_id, "sell", qty, price=ask_price, ts=t)
             actions.append(ask)
+            self.active_orders[ask.order_id] = {
+                "side": "sell",
+                "price": ask_price,
+                "age": 0,
+                "qty": qty}
             self.last_ask_id = ask.order_id
-            self.ask_age = 0
+        print(f'Cancellations:{self.cancel}')
 
         return actions if actions else None
 
@@ -394,3 +421,54 @@ class InstitutionalTrader(BaseAgent):
             ts=t,
         )
         return dark_pool.submit_order(order)
+class InformedTrader(BaseAgent):
+    def __init__(
+        self,
+        trader_id: int,
+        rng: np.random.Generator,
+        fundamental: FundamentalProcess,   # shared external process
+        sigma_s: float = 0.10,
+        entry_threshold: float = 0.05,
+        aggressive_threshold: float = 0.20,
+        base_qty: int = 10,
+        max_qty: int = 50,
+        participation_rate: float = 0.8,
+    ):
+        super().__init__(trader_id, rng)
+        self.fundamental = fundamental        # shared reference
+        self.sigma_s = sigma_s
+        self.entry_threshold = entry_threshold
+        self.aggressive_threshold = aggressive_threshold
+        self.base_qty = base_qty
+        self.max_qty = max_qty
+        self.participation_rate = participation_rate
+
+    def _size_order(self, edge: float) -> int:
+        scale = min(abs(edge) / self.aggressive_threshold, 1.0)
+        return max(1, int(self.base_qty + scale * (self.max_qty - self.base_qty)))
+
+    def act(self, t: int, book: OrderBook) -> Action:
+        if self.rng.random() > self.participation_rate:
+            return None
+
+        signal = self.fundamental.observe(self.sigma_s, self.rng)
+        mid = book.mid_price()
+        if not np.isfinite(mid):
+            mid = self.fundamental.value
+
+        edge = signal - mid
+        if abs(edge) < self.entry_threshold:
+            return None
+
+        side: Side = "buy" if edge > 0 else "sell"
+        qty = self._size_order(edge)
+
+        if abs(edge) >= self.aggressive_threshold:
+            return Order(self.new_oid(), self.trader_id, side, qty, price=None, ts=t)
+
+        bb, ba = book.best_bid(), book.best_ask()
+        px = ba if side == "buy" else bb
+        if not np.isfinite(px):
+            return Order(self.new_oid(), self.trader_id, side, qty, price=None, ts=t)
+
+        return Order(self.new_oid(), self.trader_id, side, qty, price=float(px), ts=t)
