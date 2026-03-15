@@ -327,6 +327,9 @@ class OrderBookModel(mesa.Model):
 
     # ------------------------------------------------------------------
     def step(self):
+        if self.current_step >= self.steps_to_run:
+            self.running = False
+            return
         t = self.current_step
         self._trades_this_step = []
         inventory_changes = 0
