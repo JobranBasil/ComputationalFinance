@@ -7,6 +7,7 @@ import math
 import sys
 import os
 
+from .fundemental import FundamentalProcess
 from .orderbook import Order, OrderBook, Side, Trade
 
 Action = Union[None, Order, Tuple[Literal["cancel"], int]]
@@ -404,3 +405,54 @@ class InstitutionalTrader(BaseAgent):
             ts=t,
         )
         return dark_pool.submit_order(order)
+class InformedTrader(BaseAgent):
+    def __init__(
+        self,
+        trader_id: int,
+        rng: np.random.Generator,
+        fundamental: FundamentalProcess,   # shared external process
+        sigma_s: float = 0.10,
+        entry_threshold: float = 0.05,
+        aggressive_threshold: float = 0.20,
+        base_qty: int = 10,
+        max_qty: int = 50,
+        participation_rate: float = 0.8,
+    ):
+        super().__init__(trader_id, rng)
+        self.fundamental = fundamental        # shared reference
+        self.sigma_s = sigma_s
+        self.entry_threshold = entry_threshold
+        self.aggressive_threshold = aggressive_threshold
+        self.base_qty = base_qty
+        self.max_qty = max_qty
+        self.participation_rate = participation_rate
+
+    def _size_order(self, edge: float) -> int:
+        scale = min(abs(edge) / self.aggressive_threshold, 1.0)
+        return max(1, int(self.base_qty + scale * (self.max_qty - self.base_qty)))
+
+    def act(self, t: int, book: OrderBook) -> Action:
+        if self.rng.random() > self.participation_rate:
+            return None
+
+        signal = self.fundamental.observe(self.sigma_s, self.rng)
+        mid = book.mid_price()
+        if not np.isfinite(mid):
+            mid = self.fundamental.value
+
+        edge = signal - mid
+        if abs(edge) < self.entry_threshold:
+            return None
+
+        side: Side = "buy" if edge > 0 else "sell"
+        qty = self._size_order(edge)
+
+        if abs(edge) >= self.aggressive_threshold:
+            return Order(self.new_oid(), self.trader_id, side, qty, price=None, ts=t)
+
+        bb, ba = book.best_bid(), book.best_ask()
+        px = ba if side == "buy" else bb
+        if not np.isfinite(px):
+            return Order(self.new_oid(), self.trader_id, side, qty, price=None, ts=t)
+
+        return Order(self.new_oid(), self.trader_id, side, qty, price=float(px), ts=t)
