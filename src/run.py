@@ -366,7 +366,7 @@ def run_simulation(
                     trades_this_step.append(tr)
 
             # institutional traders also submit to the dark pool
-            if isinstance(agent, InstitutionalTrader):
+            if isinstance(agent, InstitutionalTrader) or isinstance(agent, InformedTrader):
                 dp_trades = agent.act_dark(t, dark_pool)
                 if dp_trades:
                     for tr in dp_trades:

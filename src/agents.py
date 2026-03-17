@@ -421,27 +421,31 @@ class InstitutionalTrader(BaseAgent):
             ts=t,
         )
         return dark_pool.submit_order(order)
+from dataclasses import dataclass
+
 class InformedTrader(BaseAgent):
     def __init__(
         self,
         trader_id: int,
         rng: np.random.Generator,
-        fundamental: FundamentalProcess,   # shared external process
+        fundamental: FundamentalProcess,
         sigma_s: float = 0.10,
         entry_threshold: float = 0.05,
         aggressive_threshold: float = 0.20,
         base_qty: int = 10,
         max_qty: int = 50,
         participation_rate: float = 0.8,
+        dark_fraction: float = 0.20,   # <-- 20% of volume routed to dark
     ):
         super().__init__(trader_id, rng)
-        self.fundamental = fundamental        # shared reference
+        self.fundamental = fundamental
         self.sigma_s = sigma_s
         self.entry_threshold = entry_threshold
         self.aggressive_threshold = aggressive_threshold
         self.base_qty = base_qty
         self.max_qty = max_qty
         self.participation_rate = participation_rate
+        self.dark_fraction = dark_fraction
 
     def _size_order(self, edge: float) -> int:
         scale = min(abs(edge) / self.aggressive_threshold, 1.0)
@@ -452,6 +456,7 @@ class InformedTrader(BaseAgent):
             return None
 
         signal = self.fundamental.observe(self.sigma_s, self.rng)
+
         mid = book.mid_price()
         if not np.isfinite(mid):
             mid = self.fundamental.value
@@ -461,14 +466,43 @@ class InformedTrader(BaseAgent):
             return None
 
         side: Side = "buy" if edge > 0 else "sell"
-        qty = self._size_order(edge)
+        total_qty = self._size_order(edge)
 
+        # -------- split lit / dark --------
+        dark_qty = int(total_qty * self.dark_fraction)
+        lit_qty = total_qty - dark_qty
+
+        # store dark order info so simulation can route it
+        self.pending_dark_order = (side, dark_qty) if dark_qty > 0 else None
+
+        # -------- lit order --------
         if abs(edge) >= self.aggressive_threshold:
-            return Order(self.new_oid(), self.trader_id, side, qty, price=None, ts=t)
+            return Order(self.new_oid(), self.trader_id, side, lit_qty, price=None, ts=t)
 
         bb, ba = book.best_bid(), book.best_ask()
         px = ba if side == "buy" else bb
-        if not np.isfinite(px):
-            return Order(self.new_oid(), self.trader_id, side, qty, price=None, ts=t)
 
-        return Order(self.new_oid(), self.trader_id, side, qty, price=float(px), ts=t)
+        if not np.isfinite(px):
+            return Order(self.new_oid(), self.trader_id, side, lit_qty, price=None, ts=t)
+
+        return Order(self.new_oid(), self.trader_id, side, lit_qty, price=float(px), ts=t)
+
+    def act_dark(self, t: int, dark_pool):
+        """
+        Send the stored dark portion of the informed order.
+        """
+        if not hasattr(self, "pending_dark_order") or self.pending_dark_order is None:
+            return None
+
+        side, qty = self.pending_dark_order
+        self.pending_dark_order = None
+
+        order = DarkPoolOrder(
+            order_id=self.new_oid(),
+            trader_id=self.trader_id,
+            side=side,
+            qty=qty,
+            ts=t,
+        )
+
+        return dark_pool.submit_order(order)
