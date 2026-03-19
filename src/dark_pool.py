@@ -32,7 +32,7 @@ class Trade:
 
 
 class DarkPool:
-    def __init__(self, lit_orderbook, max_resting_ticks: int = 10, routing_delay: int = 10, tape_delay: int = 5):
+    def __init__(self, lit_orderbook, max_resting_ticks: int = 10, routing_delay: int = 10, tape_delay: int = 5, route_qty_cap: int = 50):
         """
         Initialize the dark pool with empty order list and trade history.
 
@@ -52,8 +52,6 @@ class DarkPool:
         # public trade tape so that every executed trade is published here so all
         # traders can observe dark-pool activity after the fact.
         self.trade_tape: List[Trade] = []
-        # parallel sorted timestamp list — kept in sync with trade_tape for O(log n) bisect lookups
-        self._tape_timestamps: List[int] = []
 
         # maximum number of timesteps an order may rest before expiry
         self.max_resting_ticks: int = max_resting_ticks
@@ -63,6 +61,12 @@ class DarkPool:
 
         # number of timesteps before a trade is visible on the public tape
         self.tape_delay: int = tape_delay
+
+        # max units routed to lit per expiry event; remainder re-queues in dark pool
+        self.route_qty_cap: int = route_qty_cap
+
+        # parallel timestamp list for O(log n) bisect lookup in recent_volume
+        self._tape_timestamps: List[int] = []
 
         # orders pending lit-book routing: list of (execute_at_ts, LitOrder)
         self.pending_lit_routes: List[tuple[int, LitOrder]] = []
@@ -148,11 +152,9 @@ class DarkPool:
         """
         Size-priority matching for the dark pool.
 
-        On each matching round, selects the largest resting bid and the largest
-        resting ask (volume priority), matching them at the current lit mid price.
-        This mirrors real dark pool behaviour where block orders are given
-        preference over smaller orders. Partially filled orders remain in the
-        pool and compete again in the next round.
+        Selects the largest resting bid and largest resting ask each round,
+        matching them at the current lit mid price. Mirrors real dark pool
+        behaviour where block orders are given preference over smaller orders.
 
         Every executed trade is published to self.trade_tape.
 
@@ -173,7 +175,7 @@ class DarkPool:
             bid = max(self.bids, key=lambda o: o.qty)
             ask = max(self.asks, key=lambda o: o.qty)
 
-            # Self-trade prevention: find the largest ask from a different trader.
+            # Self-trade prevention: find largest ask from a different trader.
             if bid.trader_id == ask.trader_id:
                 other_asks = [o for o in self.asks if o.trader_id != bid.trader_id]
                 if not other_asks:
@@ -263,11 +265,14 @@ class DarkPool:
                 order_age = current_ts - order.ts
 
                 if order_age >= self.max_resting_ticks:
+                    route_qty = min(order.qty, self.route_qty_cap)
+                    remainder_qty = order.qty - route_qty
+
                     lit_order = LitOrder(
                         order_id=order.order_id,
                         trader_id=order.trader_id,
                         side=order.side,
-                        qty=order.qty,
+                        qty=route_qty,
                         price=None,
                         ts=current_ts,
                     )
@@ -278,10 +283,22 @@ class DarkPool:
                     logging.info(
                         f"---------- EXPIRED ORDER SCHEDULED FOR LIT BOOK ----------: "
                         f"order_id: {order.order_id}, trader_id: {order.trader_id}, "
-                        f"side: {order.side}, qty: {order.qty}, "
+                        f"side: {order.side}, route_qty: {route_qty}, remainder: {remainder_qty}, "
                         f"age: {order_age} ticks, execute_at: {execute_at}"
                     )
                     routed.append(lit_order)
+
+                    # Re-queue remainder with a fresh timestamp so it rests again
+                    if remainder_qty > 0:
+                        refreshed = Order(
+                            order_id=order.order_id,
+                            trader_id=order.trader_id,
+                            side=order.side,
+                            qty=remainder_qty,
+                            ts=current_ts,
+                        )
+                        remaining.append(refreshed)
+                        self._order_index[refreshed.order_id] = refreshed
                 else:
                     remaining.append(order)
 
