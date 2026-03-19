@@ -376,12 +376,14 @@ class InstitutionalTrader(BaseAgent):
     def __init__(self, trader_id: int, rng: np.random.Generator,
                  participation_rate: float = 0.05,
                  use_iceberg_prob: float = 0.8,
+                 dark_fraction: float = 0.05,
                  peak_range=(30, 50),
                  total_range=(100, 150),
                  price_mode: str = "join"):  # "join" or "improve"
         super().__init__(trader_id, rng)
         self.participation_rate = participation_rate
         self.use_iceberg_prob = use_iceberg_prob
+        self.dark_fraction = dark_fraction
         self.peak_range = peak_range
         self.total_range = total_range
         self.price_mode = price_mode
@@ -438,7 +440,7 @@ class InstitutionalTrader(BaseAgent):
         :return: list of Trade objects from dark pool matching, or None.
         """
 
-        if self.rng.random() > 0.05:
+        if self.dark_fraction <= 0 or self.rng.random() > self.dark_fraction:
             return None
 
         side: Side = "buy" if self.rng.random() < 0.5 else "sell"
@@ -460,7 +462,7 @@ class InformedTrader(BaseAgent):
         rng: np.random.Generator,
         fundamental: FundamentalProcess,
         sigma_s: float = 0.10,
-        entry_threshold: float = 0.01,
+        entry_threshold: float = 0.05,
         aggressive_threshold: float = 0.20,
         base_qty: int = 10,
         max_qty: int = 50,

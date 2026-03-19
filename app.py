@@ -199,6 +199,7 @@ def _run():
         institutional_count=institutional_count.value,
         iceberg_prob=iceberg_prob.value,
         institutional_participation=institutional_part.value,
+        inst_dark_fraction=inst_dark_frac.value,
         informed_count=informed_count.value,
         mmas_gamma=mmas_gamma.value, mmas_kappa=mmas_kappa.value,
         mmas_sigma=mmas_sigma.value, mmas_horizon=mmas_horizon.value,

@@ -126,6 +126,7 @@ class MarketModel(mesa.Model):
         institutional_count: int = 2,
         iceberg_prob: float = 0.80,
         institutional_participation: float = 0.05,
+        inst_dark_fraction: float = 0.05,
         informed_count: int = 1,
         mmas_gamma: float = 0.10,
         mmas_kappa: float = 50.0,
@@ -224,6 +225,7 @@ class MarketModel(mesa.Model):
                     rng=np.random.default_rng(_next_seed()),
                     use_iceberg_prob=iceberg_prob,
                     participation_rate=institutional_participation,
+                    dark_fraction=inst_dark_fraction,
                 )
             )
 
