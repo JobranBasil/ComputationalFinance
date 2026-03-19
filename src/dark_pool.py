@@ -174,10 +174,13 @@ class DarkPool:
             if bid.trader_id == ask.trader_id:
                 first_ask_id = ask.order_id
                 self.asks.rotate(-1)
-                while self.asks[0].order_id != first_ask_id and self.asks[0].trader_id == bid.trader_id:
+                while self.asks[0].order_id != first_ask_id and (
+                    self.asks[0].trader_id == bid.trader_id
+                    or self.asks[0].order_id in self._cancelled_ids
+                ):
                     self.asks.rotate(-1)
-                # no valid counterparty for this bid
-                if self.asks[0].trader_id == bid.trader_id:
+                # no valid counterparty for this bid (all are same trader or cancelled)
+                if self.asks[0].trader_id == bid.trader_id or self.asks[0].order_id in self._cancelled_ids:
                     break
                 continue
 
