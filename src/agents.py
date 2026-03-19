@@ -460,7 +460,7 @@ class InformedTrader(BaseAgent):
         rng: np.random.Generator,
         fundamental: FundamentalProcess,
         sigma_s: float = 0.10,
-        entry_threshold: float = 0.05,
+        entry_threshold: float = 0.25,
         aggressive_threshold: float = 0.20,
         base_qty: int = 10,
         max_qty: int = 50,
