@@ -358,6 +358,11 @@ class DarkPool:
 
         self._expire_stale_orders(t)
         self._process_pending_routes(t)
+
+        mid = self.mid_price()
+        if not np.isnan(mid):
+            self._match_orders(mid, t)
+
         logging.info(
             f"---------- DARK POOL TICK ----------: t={t}, active_orders={len(self._order_index)}, "
             f"pending_routes={len(self.pending_lit_routes)}"
