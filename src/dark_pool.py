@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from collections import deque
 from typing import Deque, Dict, List, Literal, Set
 import logging
-from src.orderbook import Order as LitOrder
+from .orderbook import Order as LitOrder
 
 Side = Literal["buy", "sell"]
 
