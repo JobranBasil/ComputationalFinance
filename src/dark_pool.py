@@ -143,10 +143,13 @@ class DarkPool:
 
     def _match_orders(self, mid_price: float, timestamp: int) -> List[Trade]:
         """
-        'FIFO' matching for the dark pool.
+        Size-priority matching for the dark pool.
 
-        Matches the oldest buy against the oldest sell at the current lit mid price.
-        Partially filled orders retain time priority for the next matching round.
+        On each matching round, selects the largest resting bid and the largest
+        resting ask (volume priority), matching them at the current lit mid price.
+        This mirrors real dark pool behaviour where block orders are given
+        preference over smaller orders. Partially filled orders remain in the
+        pool and compete again in the next round.
 
         Every executed trade is published to self.trade_tape.
 
@@ -157,29 +160,22 @@ class DarkPool:
 
         trades: List[Trade] = []
 
+        # Purge cancelled orders upfront so size comparisons are clean.
+        self.bids = deque(o for o in self.bids if o.order_id not in self._cancelled_ids)
+        self.asks = deque(o for o in self.asks if o.order_id not in self._cancelled_ids)
+        self._cancelled_ids.clear()
+
         while self.bids and self.asks:
-            while self.bids and self.bids[0].order_id in self._cancelled_ids:
-                self._cancelled_ids.discard(self.bids.popleft().order_id)
+            # Size priority: largest qty wins on each side.
+            bid = max(self.bids, key=lambda o: o.qty)
+            ask = max(self.asks, key=lambda o: o.qty)
 
-            while self.asks and self.asks[0].order_id in self._cancelled_ids:
-                self._cancelled_ids.discard(self.asks.popleft().order_id)
-
-            if not self.bids or not self.asks:
-                break
-
-            bid = self.bids[0]
-            ask = self.asks[0]
-
-            # self-trade prevention: if the best bid and ask belong to the same trader, rotate the asks until a different trader is found or we loop back to the original ask
+            # Self-trade prevention: find the largest ask from a different trader.
             if bid.trader_id == ask.trader_id:
-                first_ask_id = ask.order_id
-                self.asks.rotate(-1)
-                while self.asks[0].order_id != first_ask_id and self.asks[0].trader_id == bid.trader_id:
-                    self.asks.rotate(-1)
-                # no valid counterparty for this bid
-                if self.asks[0].trader_id == bid.trader_id:
+                other_asks = [o for o in self.asks if o.trader_id != bid.trader_id]
+                if not other_asks:
                     break
-                continue
+                ask = max(other_asks, key=lambda o: o.qty)
 
             trade_qty = min(bid.qty, ask.qty)
 
@@ -203,9 +199,11 @@ class DarkPool:
             ask.qty -= trade_qty
 
             if bid.qty == 0:
-                self._order_index.pop(self.bids.popleft().order_id, None)
+                self.bids.remove(bid)
+                self._order_index.pop(bid.order_id, None)
             if ask.qty == 0:
-                self._order_index.pop(self.asks.popleft().order_id, None)
+                self.asks.remove(ask)
+                self._order_index.pop(ask.order_id, None)
 
         return trades
 
