@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from collections import deque
 from typing import Deque, Dict, List, Literal, Set
@@ -51,6 +52,8 @@ class DarkPool:
         # public trade tape so that every executed trade is published here so all
         # traders can observe dark-pool activity after the fact.
         self.trade_tape: List[Trade] = []
+        # parallel sorted timestamp list — kept in sync with trade_tape for O(log n) bisect lookups
+        self._tape_timestamps: List[int] = []
 
         # maximum number of timesteps an order may rest before expiry
         self.max_resting_ticks: int = max_resting_ticks
@@ -189,6 +192,7 @@ class DarkPool:
             )
             trades.append(trade)
             self.trade_tape.append(trade)
+            self._tape_timestamps.append(timestamp)
 
             logging.info(
                 f"--- (DARK POOL) TRADE ---: buyer: {bid.trader_id}, seller: {ask.trader_id}, "
@@ -337,10 +341,9 @@ class DarkPool:
 
         visible_until = current_ts - self.tape_delay
         window_start = visible_until - lookback
-        return int(sum(
-            tr.qty for tr in self.trade_tape
-            if window_start <= tr.timestamp <= visible_until
-        ))
+        lo = bisect_left(self._tape_timestamps, window_start)
+        hi = bisect_right(self._tape_timestamps, visible_until)
+        return int(sum(self.trade_tape[i].qty for i in range(lo, hi)))
 
     def tick(self, t: int) -> None:
         """

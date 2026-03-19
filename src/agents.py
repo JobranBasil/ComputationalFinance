@@ -348,19 +348,16 @@ class InstitutionalTrader(BaseAgent):
                  use_iceberg_prob: float = 0.8,
                  peak_range=(30, 50),
                  total_range=(100, 150),
-                 price_mode: str = "join"):  # "join" or "improve"
+                 price_mode: str = "join",
+                 dark_fraction: float = 0.0):
         super().__init__(trader_id, rng)
         self.participation_rate = participation_rate
         self.use_iceberg_prob = use_iceberg_prob
         self.peak_range = peak_range
         self.total_range = total_range
         self.price_mode = price_mode
-
-        # # net signed inventory: positive = long, negative = short
-        # # used to bias side selection so the trader mean-reverts toward zero
-        # self.inventory: int = 0
-        # # maximum inventory magnitude before side probability is fully skewed
-        # self.inventory_limit: int = 500
+        self.dark_fraction = dark_fraction
+        self.pending_dark_order: Optional[tuple] = None
 
     def act(self, t: int, book: OrderBook) -> Action:
         # 1) If currently executing iceberg, keep working it
@@ -373,6 +370,11 @@ class InstitutionalTrader(BaseAgent):
 
         side: Side = "buy" if self.rng.random() < 0.5 else "sell"
         total_qty = int(self.rng.integers(self.total_range[0], self.total_range[1] + 1))
+
+        # Split into lit and dark portions
+        dark_qty = int(total_qty * self.dark_fraction)
+        lit_qty = total_qty - dark_qty
+        self.pending_dark_order = (side, dark_qty) if dark_qty > 0 else None
 
         # If you don't have quotes, just skip
         bb, ba = book.best_bid(), book.best_ask()
@@ -389,30 +391,27 @@ class InstitutionalTrader(BaseAgent):
 
         # 3) Choose iceberg vs one-shot market
         if self.rng.random() < self.use_iceberg_prob:
-            self.iceberg_start(side=side, total_qty=total_qty, peak=peak, price=px)
+            self.iceberg_start(side=side, total_qty=lit_qty, peak=peak, price=px)
             print('--------------------- ICEBERG PLACED --------------------------')
             return self.iceberg_step(t, book)  # post first slice
         else:
-            return Order(self.new_oid(), self.trader_id, side, total_qty, price=None, ts=t)
+            return Order(self.new_oid(), self.trader_id, side, lit_qty, price=None, ts=t)
 
     def act_dark(self, t: int, dark_pool) -> Optional[list]:
         """
-        Submit a dark pool order if the participation check passes.
-
-        Uses the same participation rate and order sizing as act(), but submits
-        to the dark pool instead of the lit book. Returns the list of dark pool
-        trades produced by the submission, or None if the agent chose not to act.
+        Send the stored dark portion of the institutional order.
 
         :param t: current simulation timestep.
         :param dark_pool: DarkPool instance to submit to.
         :return: list of Trade objects from dark pool matching, or None.
         """
 
-        if self.rng.random() > 0.05:
+        if self.pending_dark_order is None:
             return None
 
-        side: Side = "buy" if self.rng.random() < 0.5 else "sell"
-        qty = int(self.rng.integers(self.total_range[0], self.total_range[1] + 1))
+        side, qty = self.pending_dark_order
+        self.pending_dark_order = None
+
         order = DarkPoolOrder(
             order_id=self.new_oid(),
             trader_id=self.trader_id,
