@@ -51,7 +51,7 @@ def seed_initial_book(
     book: OrderBook,
     best_bid: float = 100.0,
     best_ask: float = 101.0,
-    levels: int = 5,
+    levels: int = 10,
     rng: np.random.Generator | None = None,
 ) -> None:
     """Seed the order book with synthetic resting liquidity around an initial spread."""

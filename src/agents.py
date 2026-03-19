@@ -374,7 +374,7 @@ class MarketMaker(BaseAgent):
 
 class InstitutionalTrader(BaseAgent):
     def __init__(self, trader_id: int, rng: np.random.Generator,
-                 participation_rate: float = 0.05,
+                 participation_rate: float = 0.20,
                  use_iceberg_prob: float = 0.8,
                  dark_fraction: float = 0.05,
                  peak_range=(30, 50),
@@ -462,7 +462,7 @@ class InformedTrader(BaseAgent):
         rng: np.random.Generator,
         fundamental: FundamentalProcess,
         sigma_s: float = 0.10,
-        entry_threshold: float = 0.05,
+        entry_threshold: float = 0.1,
         aggressive_threshold: float = 0.20,
         base_qty: int = 10,
         max_qty: int = 50,
