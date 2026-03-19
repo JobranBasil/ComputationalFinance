@@ -13,56 +13,59 @@ import matplotlib.pyplot as plt
 from model import MarketModel
 
 # ======================================================================
-#  PALETTE — Robinhood-inspired clean white
+#  PALETTE — Robinhood white
 # ======================================================================
 WHITE    = "#ffffff"
-BG       = "#f7f8fa"      # very light grey page
-SIDEBAR  = "#ffffff"       # white sidebar
-CARD     = "#ffffff"       # white chart cards
-BORDER   = "#e8e8ec"       # subtle light border
-TEXT     = "#1a1a2e"       # near-black text
-LABEL    = "#6e7191"       # muted label grey
-HINT     = "#9ca3b0"       # even lighter
-DIVIDER  = "#f0f0f4"
+BG       = "#f5f6f8"
+SIDEBAR  = "#ffffff"
+CARD     = "#ffffff"
+BORDER   = "#e3e5ea"
+TEXT     = "#1a1a2e"
+LABEL    = "#5c6178"
+HINT     = "#9ca3b0"
+DIVIDER  = "#eeeff2"
+AX_BG    = "#f8f9fb"       # chart plot area — just off-white
 
-GREEN    = "#00c805"       # robinhood green
+GREEN    = "#00c805"
 RED      = "#ff5000"
 CYAN     = "#0088ff"
 PURPLE   = "#7b61ff"
 AMBER    = "#ff9f1c"
 PINK     = "#e84393"
 TEAL     = "#00b894"
-BLUE     = "#3b82f6"
 
 FONT = "-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Helvetica, Arial, sans-serif"
 
-# -- matplotlib: clean white, readable labels ----------------------------
+# -- matplotlib ---------------------------------------------------------
+TICK_C  = "#5c6178"
+TITLE_C = "#2d3142"
+
 plt.rcParams.update({
     "figure.facecolor":   "none",
-    "axes.facecolor":     "#f4f5f8",      # subtle warm grey — separates from white card
+    "axes.facecolor":     AX_BG,
     "axes.edgecolor":     "#dcdee5",
-    "axes.labelcolor":    "#4a4e69",       # dark enough to read easily
+    "axes.labelcolor":    TICK_C,
     "axes.titlesize":     10,
     "axes.labelsize":     9,
-    "xtick.color":        "#4a4e69",
-    "ytick.color":        "#4a4e69",
+    "xtick.color":        TICK_C,
+    "ytick.color":        TICK_C,
     "xtick.labelsize":    8.5,
     "ytick.labelsize":    8.5,
     "text.color":         TEXT,
-    "grid.color":         "#e4e6ed",
+    "grid.color":         "#e8e9ef",
     "grid.linestyle":     "-",
     "grid.alpha":         0.7,
     "grid.linewidth":     0.5,
-    "legend.facecolor":   "#f4f5f8",
+    "legend.facecolor":   AX_BG,
     "legend.edgecolor":   "none",
     "legend.fontsize":    8,
-    "legend.labelcolor":  "#4a4e69",
+    "legend.labelcolor":  TICK_C,
     "font.family":        "sans-serif",
     "font.size":          8.5,
     "figure.dpi":         110,
     "axes.spines.top":    False,
     "axes.spines.right":  False,
-    "axes.spines.left":   False,           # borderless feel
+    "axes.spines.left":   False,
     "axes.spines.bottom": True,
     "axes.linewidth":     0.6,
     "xtick.major.width":  0.5,
@@ -91,28 +94,20 @@ html, body, .v-application, .v-main, .v-main__wrap {{
     font-family: {FONT} !important;
     font-size: 12px !important;
 }}
-.v-card, .v-sheet.v-card {{
-    background-color: {CARD} !important;
-    color: {TEXT} !important;
-}}
+.v-card, .v-sheet.v-card {{ background-color: {CARD} !important; color: {TEXT} !important; }}
 .v-input, .v-input input {{ color: {TEXT} !important; }}
 .v-slider__thumb {{ background-color: {GREEN} !important; }}
 .v-slider__track-fill {{ background-color: {GREEN} !important; }}
 .v-slider__track-background {{ background-color: {BORDER} !important; }}
 .v-slider__thumb-label {{ color: {WHITE} !important; background: {GREEN} !important; }}
 .v-btn.primary {{
-    background-color: {GREEN} !important;
-    color: {WHITE} !important;
-    border-radius: 20px !important;
-    text-transform: none !important;
-    font-weight: 600 !important;
-    box-shadow: none !important;
+    background-color: {GREEN} !important; color: {WHITE} !important;
+    border-radius: 20px !important; text-transform: none !important;
+    font-weight: 600 !important; box-shadow: none !important;
 }}
 .v-btn--contained.error {{
-    background-color: {RED} !important;
-    color: {WHITE} !important;
-    border-radius: 20px !important;
-    text-transform: none !important;
+    background-color: {RED} !important; color: {WHITE} !important;
+    border-radius: 20px !important; text-transform: none !important;
     box-shadow: none !important;
 }}
 .v-progress-linear__determinate {{ background-color: {GREEN} !important; }}
@@ -150,30 +145,37 @@ def _rolling_vol(mids, window=20):
     lr = np.diff(np.log(arr, where=arr > 0, out=np.full_like(arr, np.nan)))
     vol = np.full(len(arr), np.nan)
     for i in range(window, len(lr)):
-        c = lr[i - window:i]
-        v = c[np.isfinite(c)]
+        c = lr[i - window:i]; v = c[np.isfinite(c)]
         vol[i + 1] = np.std(v) if len(v) > 2 else np.nan
     return vol
 
 
 # ======================================================================
-#  REACTIVE STATE
+#  STATE
 # ======================================================================
 steps                  = solara.reactive(500)
 sigma_v                = solara.reactive(0.02)
 start_price            = solara.reactive(100.0)
+
 noise_count            = solara.reactive(3)
 noise_participation    = solara.reactive(0.90)
 noise_market_prob      = solara.reactive(0.50)
+
 institutional_count    = solara.reactive(2)
+institutional_part     = solara.reactive(0.05)
+iceberg_prob           = solara.reactive(0.80)
+inst_dark_frac         = solara.reactive(0.20)
+
 informed_count         = solara.reactive(1)
 informed_participation = solara.reactive(0.50)
 informed_sigma_s       = solara.reactive(0.08)
-dark_fraction          = solara.reactive(0.20)
+informed_dark_frac     = solara.reactive(0.20)
+
 mmas_gamma             = solara.reactive(0.10)
 mmas_kappa             = solara.reactive(50.0)
 mmas_sigma             = solara.reactive(0.05)
 mmas_horizon           = solara.reactive(5000.0)
+
 tick_speed             = solara.reactive(10)
 sim_seed               = solara.reactive(42)
 
@@ -182,14 +184,12 @@ live_snapshot = solara.reactive(None)
 live_tick     = solara.reactive(0)
 is_running    = solara.reactive(False)
 is_done       = solara.reactive(False)
-
 _stop = threading.Event()
 
 def _run():
     _stop.clear()
     is_running.set(True); is_done.set(False)
     live_history.set([]); live_snapshot.set(None); live_tick.set(0)
-
     m = MarketModel(
         steps=steps.value, sigma_v=sigma_v.value,
         start_price=start_price.value,
@@ -197,16 +197,17 @@ def _run():
         noise_participation=noise_participation.value,
         noise_market_prob=noise_market_prob.value,
         institutional_count=institutional_count.value,
+        iceberg_prob=iceberg_prob.value,
+        institutional_participation=institutional_part.value,
         informed_count=informed_count.value,
         mmas_gamma=mmas_gamma.value, mmas_kappa=mmas_kappa.value,
         mmas_sigma=mmas_sigma.value, mmas_horizon=mmas_horizon.value,
         informed_participation=informed_participation.value,
         informed_sigma_s=informed_sigma_s.value,
-        dark_fraction=dark_fraction.value,
+        dark_fraction=informed_dark_frac.value,
         seed=sim_seed.value,
     )
-    total = steps.value
-    batch = max(1, tick_speed.value)
+    total = steps.value; batch = max(1, tick_speed.value)
     for t in range(total):
         if _stop.is_set(): break
         m.step()
@@ -226,46 +227,45 @@ def stop_sim():
 
 
 # ======================================================================
-#  LABELED SLIDER — shows value badge inline
+#  LABELED SLIDERS
 # ======================================================================
 
 @solara.component
-def LSliderInt(label, value, min, max, step=1):
-    with solara.Row(style={
-        "align-items": "center", "gap": "0px", "margin": "2px 0",
-    }):
+def LS_Int(label, value, min, max, step=1):
+    with solara.Row(style={"align-items": "center", "gap": "0", "margin": "1px 0"}):
         solara.SliderInt(label, value=value, min=min, max=max, step=step)
         solara.Text(f"{value.value}", style={
             "color": GREEN, "font-size": "13px", "font-weight": "700",
             "min-width": "36px", "text-align": "right",
-            "font-family": FONT,
         })
 
 @solara.component
-def LSliderFloat(label, value, min, max, step=0.01):
+def LS_Float(label, value, min, max, step=0.01):
     v = value.value
-    # auto-format
-    if step >= 1:
-        txt = f"{v:.0f}"
-    elif step >= 0.1:
-        txt = f"{v:.1f}"
-    elif step >= 0.01:
-        txt = f"{v:.2f}"
-    else:
-        txt = f"{v:.3f}"
-    with solara.Row(style={
-        "align-items": "center", "gap": "0px", "margin": "2px 0",
-    }):
+    if step >= 1: txt = f"{v:.0f}"
+    elif step >= 0.1: txt = f"{v:.1f}"
+    elif step >= 0.01: txt = f"{v:.2f}"
+    else: txt = f"{v:.3f}"
+    with solara.Row(style={"align-items": "center", "gap": "0", "margin": "1px 0"}):
         solara.SliderFloat(label, value=value, min=min, max=max, step=step)
         solara.Text(txt, style={
             "color": GREEN, "font-size": "13px", "font-weight": "700",
             "min-width": "44px", "text-align": "right",
-            "font-family": FONT,
+        })
+
+@solara.component
+def LS_Pct(label, value, min=0.0, max=1.0, step=0.05):
+    """Slider that shows value as percentage."""
+    with solara.Row(style={"align-items": "center", "gap": "0", "margin": "1px 0"}):
+        solara.SliderFloat(label, value=value, min=min, max=max, step=step)
+        solara.Text(f"{value.value:.0%}", style={
+            "color": GREEN, "font-size": "13px", "font-weight": "700",
+            "min-width": "44px", "text-align": "right",
         })
 
 
 # ======================================================================
-#  CHART CARD — individual rounded white card for each chart
+#  CHART CARD STYLE
 # ======================================================================
 
 CARD_STYLE = {
@@ -285,10 +285,8 @@ CARD_STYLE = {
 FW = 6.0
 FH = 2.4
 
-TITLE_C = "#2d3142"   # dark enough to read on light grey axes
-
 def _fin(fig, ax):
-    ax.grid(True, axis="y")     # horizontal lines only — cleaner
+    ax.grid(True, axis="y")
     ax.tick_params(axis="both", which="major", labelsize=8.5)
     fig.tight_layout(pad=0.8)
 
@@ -381,7 +379,7 @@ def ChartDark(history):
 
 
 # ======================================================================
-#  STAT PILL
+#  PILL
 # ======================================================================
 
 @solara.component
@@ -410,7 +408,7 @@ def Page():
 
     with solara.Column(style={"background": BG, "min-height": "100vh", "padding": "0"}):
 
-        # ── HEADER ──
+        # header
         with solara.Row(style={
             "background": WHITE, "padding": "12px 28px",
             "border-bottom": f"1px solid {BORDER}",
@@ -425,12 +423,12 @@ def Page():
 
         with solara.Row(style={"gap": "0", "flex": "1"}):
 
-            # ━━━━━━━━  SIDEBAR  ━━━━━━━━
+            # ─── SIDEBAR ───
             with solara.Column(style={
-                "width": "290px", "min-width": "290px",
+                "width": "300px", "min-width": "300px",
                 "background": SIDEBAR,
                 "border-right": f"1px solid {BORDER}",
-                "padding": "16px 16px",
+                "padding": "12px 14px",
                 "overflow-y": "auto",
                 "max-height": "calc(100vh - 50px)",
             }):
@@ -444,29 +442,38 @@ def Page():
                     })
 
                 _hdr("Simulation")
-                LSliderInt("Steps", value=steps, min=100, max=3000, step=100)
-                LSliderFloat("Start Price", value=start_price, min=50, max=200, step=1.0)
-                LSliderInt("Ticks / refresh", value=tick_speed, min=1, max=50)
-                LSliderInt("Seed", value=sim_seed, min=1, max=9999)
+                LS_Int("Steps", value=steps, min=100, max=3000, step=100)
+                LS_Float("Start Price", value=start_price, min=50, max=200, step=1.0)
+                LS_Int("Ticks / refresh", value=tick_speed, min=1, max=50)
+                LS_Int("Seed", value=sim_seed, min=1, max=9999)
 
                 _hdr("Fundamental")
-                LSliderFloat("sigma_v", value=sigma_v, min=0.005, max=0.05, step=0.005)
+                LS_Float("sigma_v", value=sigma_v, min=0.005, max=0.05, step=0.005)
 
                 _hdr("Noise Traders")
-                LSliderInt("Count", value=noise_count, min=1, max=10)
-                LSliderFloat("Participation", value=noise_participation, min=0.1, max=1.0, step=0.05)
-                LSliderFloat("Mkt Order %", value=noise_market_prob, min=0.1, max=0.9, step=0.05)
+                LS_Int("Count", value=noise_count, min=1, max=10)
+                LS_Pct("Participation", value=noise_participation, min=0.1, max=1.0, step=0.05)
+                LS_Pct("Mkt Order %", value=noise_market_prob, min=0.1, max=0.9, step=0.05)
+
+                _hdr("Market Maker (A-S)")
+                LS_Float("gamma (Risk Aversion)", value=mmas_gamma, min=0.01, max=1.0, step=0.01)
+                LS_Float("kappa (Liquidity)", value=mmas_kappa, min=5.0, max=200.0, step=5.0)
+                LS_Float("sigma (Vol Est)", value=mmas_sigma, min=0.01, max=0.20, step=0.01)
+                LS_Float("T (Horizon)", value=mmas_horizon, min=500.0, max=10000.0, step=500.0)
 
                 _hdr("Institutional Traders")
-                LSliderInt("Count", value=institutional_count, min=0, max=6)
-                LSliderFloat("Dark Fraction", value=dark_fraction, min=0.0, max=1.0, step=0.05)
+                LS_Int("Count", value=institutional_count, min=0, max=6)
+                LS_Pct("Participation", value=institutional_part, min=0.01, max=0.30, step=0.01)
+                LS_Pct("Iceberg Prob", value=iceberg_prob, min=0.0, max=1.0, step=0.05)
+                LS_Pct("Dark Fraction", value=inst_dark_frac, min=0.0, max=1.0, step=0.05)
 
                 _hdr("Informed Traders")
-                LSliderInt("Count", value=informed_count, min=0, max=5)
-                LSliderFloat("Participation", value=informed_participation, min=0.1, max=1.0, step=0.05)
-                LSliderFloat("sigma_s", value=informed_sigma_s, min=0.01, max=0.30, step=0.01)
+                LS_Int("Count", value=informed_count, min=0, max=5)
+                LS_Pct("Participation", value=informed_participation, min=0.1, max=1.0, step=0.05)
+                LS_Float("sigma_s", value=informed_sigma_s, min=0.01, max=0.30, step=0.01)
+                LS_Pct("Dark Fraction", value=informed_dark_frac, min=0.0, max=1.0, step=0.05)
 
-                with solara.Row(style={"gap": "8px", "margin-top": "20px"}):
+                with solara.Row(style={"gap": "8px", "margin-top": "18px"}):
                     solara.Button(
                         "Run" if not is_running.value else "Running...",
                         on_click=start_sim, disabled=is_running.value,
@@ -479,7 +486,7 @@ def Page():
                         style={"font-weight": "600"},
                     )
 
-            # ━━━━━━━━  MAIN  ━━━━━━━━
+            # ─── MAIN ───
             with solara.Column(style={
                 "flex": "1", "padding": "14px 18px",
                 "overflow-y": "auto",
@@ -503,17 +510,17 @@ def Page():
                             "color": HINT, "font-size": "12px",
                         })
                 else:
-                    # ── status row ──
                     pct = int(100 * cur_t / tot_t) if tot_t > 0 else 0
                     tag = "LIVE" if is_running.value else ("DONE" if is_done.value else "")
-                    tag_c = GREEN if is_running.value else BLUE
+                    tag_c = GREEN if is_running.value else CYAN
 
                     with solara.Row(style={
                         "align-items": "center", "gap": "8px",
                         "margin-bottom": "8px", "flex-wrap": "wrap",
                     }):
                         Pill("Tick", f"{cur_t}/{tot_t}", tag_c)
-                        Pill("Dark Frac", f"{dark_fraction.value:.0%}", AMBER)
+                        Pill("Dark Frac", f"{informed_dark_frac.value:.0%}", AMBER)
+                        Pill("Iceberg", f"{iceberg_prob.value:.0%}", PURPLE)
                         mids_v = [h["mid"] for h in history if h["mid"] is not None]
                         spreads_v = [h["spread"] for h in history if h["spread"] is not None]
                         if mids_v:
@@ -524,28 +531,24 @@ def Page():
                         if misp:
                             Pill("|Mispricing|", f"{np.mean(misp):.4f}", PINK)
                         if tag:
-                            solara.Text(f"{tag}", style={
-                                "color": tag_c, "font-size": "11px",
-                                "font-weight": "700", "letter-spacing": "0.5px",
+                            solara.Text(tag, style={
+                                "color": tag_c, "font-size": "11px", "font-weight": "700",
                             })
 
                     solara.ProgressLinear(value=pct)
 
-                    # ── ROW 1 ──
                     with solara.Row(style={"gap": "12px", "margin-top": "12px"}):
                         with solara.Column(style=CARD_STYLE):
                             ChartPrice(history)
                         with solara.Column(style=CARD_STYLE):
                             ChartBook(snapshot)
 
-                    # ── ROW 2 ──
                     with solara.Row(style={"gap": "12px", "margin-top": "12px"}):
                         with solara.Column(style=CARD_STYLE):
                             ChartSpread(history)
                         with solara.Column(style=CARD_STYLE):
                             ChartVol(history)
 
-                    # ── ROW 3 ──
                     with solara.Row(style={"gap": "12px", "margin-top": "12px"}):
                         with solara.Column(style=CARD_STYLE):
                             ChartDepth(history)
