@@ -269,7 +269,7 @@ class MarketMakerAS(BaseAgent):
             mid_price = self.last_valid_mid  # FIX: use last known
 
         # ── step 3: Avellaneda-Stoikov reservation price ──
-        time_remaining = max(0.1, 1.0 - t / self.T)
+        time_remaining = 0.5
         raw_skew = self.inventory * self.gamma * self.sigma ** 2 * time_remaining
 
         # FIX: cap the skew so the MM never drifts too far from mid
