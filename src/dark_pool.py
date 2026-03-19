@@ -36,8 +36,8 @@ class DarkPool:
         Initialize the dark pool with empty order list and trade history.
 
         :param lit_orderbook: reference to the lit OrderBook for price discovery.
-        :param max_resting_ticks: maximum number of timesteps an order can rest in the dark pool before being routed to the lit order book as a market order.
-        :param routing_delay: number of timesteps to wait before a stale order is actually submitted to the lit order book, mimicking real-world routing latency.
+        :param max_resting_ticks: maximum number of timesteps an order can rest in the dark pool
+        :param routing_delay: number of timesteps to wait before a stale order is actually submitted to the lit order book.
         :param tape_delay: number of timesteps before a trade appears on the public tape (information revelation lag).
         """
 
@@ -148,14 +148,6 @@ class DarkPool:
         Matches the oldest buy against the oldest sell at the current lit mid price.
         Partially filled orders retain time priority for the next matching round.
 
-        Self-trading is prevented at match time: when the front-of-queue bid and ask
-        belong to the same trader, asks are rotated to find a valid counterparty. If
-        all resting asks are from the same trader as the best bid, matching stops for
-        this round.
-
-        Expiry and lit-book routing are NOT handled here — both are owned by tick(t),
-        which the simulation loop must call every step.
-
         Every executed trade is published to self.trade_tape.
 
         :param mid_price: execution price (lit book mid).
@@ -228,13 +220,15 @@ class DarkPool:
         self.pending_lit_routes = [(ts, order) for ts, order in self.pending_lit_routes if current_ts < ts]
 
         for execute_at, lit_order in due:
+            # bug fix as the calcuation was happening after the lit order submission
+            original_qty = lit_order.qty
             lit_trades = self.lit_orderbook.execute_market(lit_order)
             filled_qty = sum(tr.qty for tr in lit_trades)
-            unfilled_qty = lit_order.qty - filled_qty
+            unfilled_qty = original_qty - filled_qty
             logging.info(
-                f"--- PENDING ROUTE EXECUTED ---: "
+                f"---------- PENDING ROUTE EXECUTED ----------: "
                 f"order_id: {lit_order.order_id}, trader_id: {lit_order.trader_id}, "
-                f"side: {lit_order.side}, qty: {lit_order.qty}, "
+                f"side: {lit_order.side}, qty: {original_qty}, "
                 f"filled: {filled_qty}, unfilled: {unfilled_qty}, "
                 f"scheduled_at: {execute_at}, executed_at: {current_ts}"
             )
@@ -280,7 +274,7 @@ class DarkPool:
                     self._order_index.pop(order.order_id, None)
 
                     logging.info(
-                        f"--- EXPIRED ORDER SCHEDULED FOR LIT BOOK ---: "
+                        f"---------- EXPIRED ORDER SCHEDULED FOR LIT BOOK ----------: "
                         f"order_id: {order.order_id}, trader_id: {order.trader_id}, "
                         f"side: {order.side}, qty: {order.qty}, "
                         f"age: {order_age} ticks, execute_at: {execute_at}"
@@ -337,14 +331,11 @@ class DarkPool:
         Sum of traded quantity visible on the public tape within the window
         [current_ts - lookback - tape_delay, current_ts - tape_delay].
 
-        The tape_delay offset ensures only trades that have already been published
-        (i.e. are at least tape_delay ticks old) are included, matching the
-        information revelation lag built into the dark pool.
-
         :param current_ts: current simulation timestamp.
         :param lookback: number of ticks to look back from the publication frontier.
         :return: total traded quantity visible to the market in this window.
         """
+
 
         visible_until = current_ts - self.tape_delay
         window_start = visible_until - lookback
@@ -368,6 +359,6 @@ class DarkPool:
         self._expire_stale_orders(t)
         self._process_pending_routes(t)
         logging.info(
-            f"----- DARK POOL TICK ----- t={t}, active_orders={len(self._order_index)}, "
+            f"---------- DARK POOL TICK ----------: t={t}, active_orders={len(self._order_index)}, "
             f"pending_routes={len(self.pending_lit_routes)}"
         )
