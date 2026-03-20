@@ -3,7 +3,7 @@ import logging
 
 from dataclasses import dataclass
 from collections import deque
-from typing import Deque, List, Dict, Optional, Literal, Set
+from typing import Deque, List, Dict, Optional, Literal, Set, Any
 from .orderbook import Order as LitOrder
 
 Side = Literal['buy', 'sell']
@@ -77,9 +77,75 @@ class DarkPool:
 
         return (best_bid + best_ask) / 2
 
-    def match_order(self, order: Order, lit_order: LitOrder):
-        # todo: implement
-        pass
+    def match_orders(self, mid_price: float, timestamp: int) -> list[Any] | None:
+        # add string literal comment
+        trades = List[Trade] = []
+
+        while self.bids and self.asks:
+
+            while self.bids and self.bids[0].order_id in self.cancelled_ids:
+                # Remove cancelled orders from the front of the bids queue
+                logging.info(f"-----CANCELLED ORDER REMOVED FROM DP BID QUEUE-----: Removing cancelled order from bids queue: {self.bids[0].order_id}")
+                self._cancelled_ids.discard(self.bids.popleft().order_id)
+
+            while self.asks and self.asks[0].order_id in self.cancelled_ids:
+                # Remove cancelled orders from the front of the asks queue
+                logging.info(f"-----CANCELLED ORDER REMOVED FROM DP ASK QUEUE-----: Removing cancelled order from asks queue: {self.asks[0].order_id}")
+                self._cancelled_ids.discard(self.asks.popleft().order_id)
+
+            if not self.bids or not self.asks:
+                # No more orders to match
+                logging.warning(f"-----WARNING-----: No more orders to match: bids: {len(self.bids)}, asks: {len(self.asks)}")
+                break
+
+            # Get the best bid and ask
+            bid = self.bids[0]
+            ask = self.asks[0]
+
+            if bid.trader_id == ask.trader_id:
+                top_ask_id = ask.order_id
+                self.asks.rotate(-1)
+                while self.asks[0].order_id != top_ask_id and self.asks[0].trader_id == bid.trader_id:
+                    self.asks.rotate(-1)
+                if self.asks[0].order_id == top_ask_id:
+                    # No more matching asks for this bid
+                    logging.warning(f"-----WARNING-----: No more matching asks for this bid: bid: {bid.trader_id}, ask: {ask.trader_id}")
+                    break
+                logging.warning(f"-----WARNING-----: self.asks[0].trader_id == bid.trader_id: bid: {bid.trader_id}, ask: {ask.trader_id}")
+                continue
+            trade_qty = min(bid.qty, ask.qty)
+
+            if trade_qty <= 0:
+                logging.warning(f"-----WARNING-----: trade_qty <= 0: bid: {bid.trader_id}, ask: {ask.trader_id}, qty: {trade_qty}")
+                break
+
+            # create a trade at the mid price with the matched quantity
+            trade = Trade(
+                price = mid_price,
+                qty = trade_qty,
+                timestamp = timestamp,
+            )
+
+            # record the trade in the tape and the list of trades for this tick
+            trades.append(trade)
+            self.trade_tape.append(trade)
+
+            logging.info(f"-----DARK POOL TRADE -----: buyer: {bid.trader_id}, seller: {ask.trader_id}, price: {mid_price}, qty: {trade_qty}, timestamp: {timestamp}")
+
+            # reduce the qty of the matched orders to account for partial fills
+            bid.qty -= trade_qty
+            ask.qty -= trade_qty
+
+            # check if the matched orders are now empty
+            if bid.qty == 0:
+                self.order_index.pop(self.bids.popleft().order_id, None)
+            if ask.qty == 0:
+                self.order_index.pop(self.asks.popleft().order_id, None)
+
+            return trades
+
+
+
 
     def submit_order(self, order: Order) -> List[Trade]:
         # todo: implement
