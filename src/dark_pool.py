@@ -180,9 +180,16 @@ class DarkPool:
         # todo: implement
         pass
 
-    def cancel_order(self, order_id: int) -> bool:
-        # todo: implement
-        pass
+    def cancel_order(self, order: Order) -> bool:
+        if order.order_id not in self.order_index:
+            logging.warning(f"-----WARNING: ORDER NOT FOUND-----: Order not found in order index: order_id: {order.order_id}")
+            return False
+
+        self.cancelled_ids.add(order.order_id)
+
+        del self.order_index[order.order_id]
+        logging.info(f"-----ORDER CANCELLED-----: order_id: {order.order_id}")
+        return True
 
     def has_order(self) -> bool:
         # todo: implement
