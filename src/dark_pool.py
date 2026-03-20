@@ -53,8 +53,29 @@ class DarkPool:
         self.cancelled_ids: Set[int] = set()
 
     def compute_mid_price(self):
-        # todo: implement
-        pass
+        if not self.lit_order_book.bids or not self.lit_order_book.asks:
+            logging.warning("-----WARNING-----: No orders in lit orderbook")
+            return np.nan
+
+        best_bid = self.lit_order_book.best_bid()
+        best_ask = self.lit_order_book.best_ask()
+
+        if best_bid is None or best_ask is None:
+            logging.warning("-----WARNING-----: Best bid or ask is None")
+            return np.nan
+
+        if best_bid <= 0 or best_ask <= 0:
+            logging.warning("-----WARNING-----: Best bid or ask is <= 0")
+            return np.nan
+
+        if not np.isfinite(best_bid) or not np.isfinite(best_ask):
+            logging.warning("-----WARNING-----: Best bid or ask is not finite")
+
+        if best_bid >= best_ask:
+            logging.warning("-----WARNING-----: Best bid is >= best ask")
+            return np.nan
+
+        return (best_bid + best_ask) / 2
 
     def match_order(self, order: Order, lit_order: LitOrder):
         # todo: implement
