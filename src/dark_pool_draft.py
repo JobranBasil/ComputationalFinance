@@ -126,6 +126,7 @@ class DarkPool:
 
         self._order_index[order.order_id] = order
 
+
         logging.info(
             f"--- ORDER SUBMISSION ---: trader: {order.trader_id}, order: {order.order_id}, "
             f"side: {order.side}, qty: {order.qty}, timestamp: {order.ts}"

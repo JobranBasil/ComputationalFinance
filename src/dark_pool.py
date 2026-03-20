@@ -144,12 +144,37 @@ class DarkPool:
 
             return trades
 
+    def submit_order(self, order: Order) -> list[Trade] | None:
 
+        if order.qty <= 0:
+            logging.warning(f"-----WARNING: INVALID ORDER QUANTITY-----: Order qty <= 0: order_id: {order.order_id}, qty: {order.qty}")
+            return []
 
+        if order.side not in ["buy", "sell"]:
+            logging.warning(f"-----WARNING: INVALID ORDER SIDE-----: Invalid order side: order_id: {order.order_id}, side: {order.side}")
+            return []
 
-    def submit_order(self, order: Order) -> List[Trade]:
-        # todo: implement
-        pass
+        if order.ts < 0:
+            logging.warning(f"-----WARNING: INVALID ORDER TIMESTAMP-----: Order timestamp < 0: order_id: {order.order_id}, ts: {order.ts}")
+            return []
+
+        if order.side == "buy":
+            self.bids.append(order)
+
+        if order.side == "sell":
+            self.asks.append(order)
+
+        self.order_index[order.order_id] = order
+
+        logging.info(f"-----ORDER SUBMISSION-----: order_id: {order.order_id}, side: {order.side}, qty: {order.qty}, timestamp: {order.ts}")
+
+        mid_price = self.compute_mid_price()
+
+        if np.isnan(mid_price):
+            logging.warning(f"-----WARNING: MID PRICE IS NOT AVAILABLE-----: Order submitted in queue but cannot be executed: order_id: {order.order_id}")
+            return []
+
+        return self.match_orders(mid_price, order.ts)
 
     def tick(self, t: int):
         # todo: implement
