@@ -14,8 +14,11 @@ class Order:
     Represents an order in the dark pool.
     """
 
-    # todo: implement
-    pass
+    order_id: int
+    trader_id: int
+    side: Side
+    qty: int
+    ts: int = 0
 
 @dataclass
 class Trade:
@@ -23,9 +26,9 @@ class Trade:
     Represents a trade in the dark pool.
     """
 
-
-    # todo: implement
-    pass
+    price: float
+    qty: int
+    timestamp: int
 
 
 class DarkPool:
@@ -34,8 +37,20 @@ class DarkPool:
     """
 
     def __init__(self, lit_order_book, max_resting_ticks: int = 10, routing_delay: int = 10, tape_delay: int = 5):
-        # todo: implement
-        pass
+        self.lit_order_book = lit_order_book
+
+        self.bids: Deque[Order] = deque()
+        self.asks: Deque[Order] = deque()
+
+        self.trade_tape: List[Trade] = []
+
+        self.max_resting_ticks: int = max_resting_ticks
+        self.routing_delay: int = routing_delay
+        self.tape_delay: int = tape_delay
+        self.pending_lit_routes: List[tuple[int, LitOrder]] = []
+
+        self.order_index: Dict[int, Order] = {}
+        self.cancelled_ids: Set[int] = set()
 
     def compute_mid_price(self):
         # todo: implement
@@ -61,7 +76,7 @@ class DarkPool:
         # todo: implement
         pass
 
-    def queue_depth(self) -> [tuple, tuple]:
+    def queue_depth(self) -> tuple[int, int]:
         # todo: implement
         pass
 
