@@ -192,8 +192,7 @@ class DarkPool:
         return True
 
     def has_order(self) -> bool:
-        # todo: implement
-        pass
+        return len(self.order_index) > 0
 
     def queue_depth(self) -> tuple[int, int]:
         # todo: implement
