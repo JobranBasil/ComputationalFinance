@@ -177,8 +177,16 @@ class DarkPool:
         return self.match_orders(mid_price, order.ts)
 
     def tick(self, t: int):
-        # todo: implement
-        pass
+        self._process_pending_routes(t)
+        self._expire_stale_orders(t)
+
+        mid_price = self.compute_mid_price()
+
+        if np.isnan(mid_price):
+            logging.warning(f"-----WARNING: MID PRICE IS NOT AVAILABLE-----: Cannot execute orders in queue: bids: {len(self.bids)}, asks: {len(self.asks)}")
+            return
+        self.match_orders(mid_price, t)
+        logging.info(f"-----DARK POOL TICK-----: t={t}, active_orders={len(self.order_index)}, pending_routes={len(self.pending_lit_routes)}")
 
     def cancel_order(self, order: Order) -> bool:
         if order.order_id not in self.order_index:
