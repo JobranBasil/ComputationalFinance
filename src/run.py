@@ -51,7 +51,7 @@ def seed_initial_book(
     book: OrderBook,
     best_bid: float = 100.0,
     best_ask: float = 101.0,
-    levels: int = 10,
+    levels: int = 20,
     rng: np.random.Generator | None = None,
 ) -> None:
     """Seed the order book with synthetic resting liquidity around an initial spread."""
@@ -505,21 +505,25 @@ def main() -> None:
 
     agents = [
         NoiseTrader(trader_id=1, rng=np.random.default_rng(1)),
+        NoiseTrader(trader_id=2, rng=np.random.default_rng(2)),
+        NoiseTrader(trader_id=3, rng=np.random.default_rng(3)),
+        NoiseTrader(trader_id=4, rng=np.random.default_rng(4)),
         NoiseTrader(trader_id=5, rng=np.random.default_rng(5)),
         NoiseTrader(trader_id=6, rng=np.random.default_rng(6)),
-        MarketMaker(trader_id=2, rng=np.random.default_rng(2)),
-        InstitutionalTrader(trader_id=3, rng=np.random.default_rng(3)),
-        InstitutionalTrader(trader_id=8, rng=np.random.default_rng(8)),
+        MarketMaker(trader_id=7, rng=np.random.default_rng(7)),
+        InstitutionalTrader(trader_id=8, use_iceberg_prob=0, dark_fraction=0, rng=np.random.default_rng(8)),
+        InstitutionalTrader(trader_id=9, use_iceberg_prob=0, dark_fraction=0, rng=np.random.default_rng(8)),
         InformedTrader(
-            trader_id=7,
-            rng=np.random.default_rng(7),
+            trader_id=10,
+            rng=np.random.default_rng(10),
             fundamental=fundamental,
             sigma_s=0.08,
-            participation_rate=0.5,
+            participation_rate=0.4,
+            dark_fraction=0,
         ),
         MarketMakerAS(
-            trader_id=4,
-            rng=np.random.default_rng(4),
+            trader_id=11,
+            rng=np.random.default_rng(11),
             horizon=5000,
             kappa=50,
             gamma=0.1,

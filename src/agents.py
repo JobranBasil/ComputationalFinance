@@ -129,9 +129,9 @@ class NoiseTrader(BaseAgent):
         trader_id: int,
         rng: np.random.Generator,
         participation_rate: float = 0.9,
-        market_prob: float = 0.5,
+        market_prob: float = 0.4,
         sign_persistence: float = 0.7,
-        max_depth_ticks: int = 10,
+        max_depth_ticks: int = 20,
     ):
         super().__init__(trader_id, rng)
         self.participation_rate = participation_rate
@@ -344,9 +344,9 @@ class MarketMaker(BaseAgent):
 
 class InstitutionalTrader(BaseAgent):
     def __init__(self, trader_id: int, rng: np.random.Generator,
-                 participation_rate: float = 0.20,
-                 use_iceberg_prob: float = 0.8,
-                 dark_fraction: float = 0.05,
+                 use_iceberg_prob: float,
+                 dark_fraction: float,
+                 participation_rate: float = 0.10,
                  peak_range=(30, 50),
                  total_range=(100, 150),
                  price_mode: str = "join"):  # "join" or "improve"
@@ -431,13 +431,13 @@ class InformedTrader(BaseAgent):
         trader_id: int,
         rng: np.random.Generator,
         fundamental: FundamentalProcess,
+        participation_rate: float,
+        dark_fraction: float,
         sigma_s: float = 0.10,
         entry_threshold: float = 0.1,
         aggressive_threshold: float = 0.20,
         base_qty: int = 10,
-        max_qty: int = 50,
-        participation_rate: float = 0.8,
-        dark_fraction: float = 0.20,   # <-- 20% of volume routed to dark
+        max_qty: int = 50 # <-- 20% of volume routed to dark
     ):
         super().__init__(trader_id, rng)
         self.fundamental = fundamental
