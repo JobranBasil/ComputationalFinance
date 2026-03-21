@@ -212,6 +212,28 @@ class DarkPool:
 
         return (bid_qty, ask_qty)
 
+    def recent_volume(self, current_ts: int, lookback: int) -> int:
+        lookback_start = current_ts - self.tape_delay
+        window_start = lookback_start - lookback
+
+        if lookback < 0:
+            logging.warning(f"-----WARNING: INVALID LOOKBACK PERIOD-----: Lookback period cannot be negative: lookback: {lookback}")
+            return 0
+
+        if lookback_start < 0:
+            logging.warning(f"-----WARNING: INVALID LOOKBACK PERIOD-----: Lookback period cannot be negative: lookback_start: {lookback_start}")
+            return 0
+
+        if window_start < 0:
+            logging.warning(f"-----WARNING: INVALID LOOKBACK PERIOD-----: Lookback period cannot be negative: window_start: {window_start}")
+            return 0
+
+        return  int(
+            sum(
+                trade.qty for trade in self.trade_tape if window_start <= trade.timestamp <= lookback_start
+            )
+        )
+
     def _process_pending_routes(self, current_ts: int):
         # todo: implement
         pass
