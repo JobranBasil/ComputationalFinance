@@ -195,8 +195,22 @@ class DarkPool:
         return len(self.order_index) > 0
 
     def queue_depth(self) -> tuple[int, int]:
-        # todo: implement
-        pass
+        # todo: commit and push
+        bid_qty = sum(
+            order.qty for order in self.order_index.values() if order.side == "buy"
+        )
+        ask_qty = sum(
+            order.qty for order in self.order_index.values() if order.side == "sell"
+        )
+
+        if bid_qty < 0:
+            logging.warning(f"-----WARNING: INVALID BID QTY-----: Negative queue depth detected: bid_qty: {bid_qty}")
+            return (0, 0)
+        if ask_qty < 0:
+            logging.warning(f"-----WARNING: INVALID ASK QTY-----: Negative queue depth detected: ask_qty: {ask_qty}")
+            return (0, 0)
+
+        return (bid_qty, ask_qty)
 
     def _process_pending_routes(self, current_ts: int):
         # todo: implement
