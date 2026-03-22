@@ -3,9 +3,7 @@ import logging
 
 from dataclasses import dataclass
 from collections import deque
-from typing import Deque, List, Dict, Optional, Literal, Set, Any
-
-from contourpy.util.bokeh_util import filled_to_bokeh
+from typing import Deque, List, Dict, Literal, Set, Any
 
 from .orderbook import Order as LitOrder
 
@@ -39,8 +37,8 @@ class DarkPool:
     Represents a dark pool for trading.
     """
 
-    def __init__(self, lit_order_book, max_resting_ticks: int = 10, routing_delay: int = 10, tape_delay: int = 5):
-        self.lit_order_book = lit_order_book
+    def __init__(self, lit_orderbook, max_resting_ticks: int = 10, routing_delay: int = 10, tape_delay: int = 5):
+        self.lit_orderbook = lit_orderbook
 
         self.bids: Deque[Order] = deque()
         self.asks: Deque[Order] = deque()
@@ -56,12 +54,12 @@ class DarkPool:
         self.cancelled_ids: Set[int] = set()
 
     def compute_mid_price(self):
-        if not self.lit_order_book.bids or not self.lit_order_book.asks:
+        if not self.lit_orderbook.bids or not self.lit_orderbook.asks:
             logging.warning("-----WARNING-----: No orders in lit orderbook")
             return np.nan
 
-        best_bid = self.lit_order_book.best_bid()
-        best_ask = self.lit_order_book.best_ask()
+        best_bid = self.lit_orderbook.best_bid()
+        best_ask = self.lit_orderbook.best_ask()
 
         if best_bid is None or best_ask is None:
             logging.warning("-----WARNING-----: Best bid or ask is None")
@@ -73,6 +71,7 @@ class DarkPool:
 
         if not np.isfinite(best_bid) or not np.isfinite(best_ask):
             logging.warning("-----WARNING-----: Best bid or ask is not finite")
+            return np.nan
 
         if best_bid >= best_ask:
             logging.warning("-----WARNING-----: Best bid is >= best ask")
@@ -81,20 +80,19 @@ class DarkPool:
         return (best_bid + best_ask) / 2
 
     def match_orders(self, mid_price: float, timestamp: int) -> list[Any] | None:
-        # add string literal comment
-        trades = List[Trade] = []
+        trades: List[Trade] = []
 
         while self.bids and self.asks:
 
             while self.bids and self.bids[0].order_id in self.cancelled_ids:
                 # Remove cancelled orders from the front of the bids queue
                 logging.info(f"-----CANCELLED ORDER REMOVED FROM DP BID QUEUE-----: Removing cancelled order from bids queue: {self.bids[0].order_id}")
-                self._cancelled_ids.discard(self.bids.popleft().order_id)
+                self.cancelled_ids.discard(self.bids.popleft().order_id)
 
             while self.asks and self.asks[0].order_id in self.cancelled_ids:
                 # Remove cancelled orders from the front of the asks queue
                 logging.info(f"-----CANCELLED ORDER REMOVED FROM DP ASK QUEUE-----: Removing cancelled order from asks queue: {self.asks[0].order_id}")
-                self._cancelled_ids.discard(self.asks.popleft().order_id)
+                self.cancelled_ids.discard(self.asks.popleft().order_id)
 
             if not self.bids or not self.asks:
                 # No more orders to match
@@ -145,7 +143,7 @@ class DarkPool:
             if ask.qty == 0:
                 self.order_index.pop(self.asks.popleft().order_id, None)
 
-            return trades
+        return trades
 
     def submit_order(self, order: Order) -> list[Trade] | None:
 
@@ -159,6 +157,10 @@ class DarkPool:
 
         if order.ts < 0:
             logging.warning(f"-----WARNING: INVALID ORDER TIMESTAMP-----: Order timestamp < 0: order_id: {order.order_id}, ts: {order.ts}")
+            return []
+
+        if order.order_id in self.order_index or any(o.order_id == order.order_id for _, o in self.pending_lit_routes):
+            logging.warning(f"-----WARNING: DUPLICATE ORDER ID-----: Order ID already exists: order_id: {order.order_id}")
             return []
 
         if order.side == "buy":
@@ -191,15 +193,15 @@ class DarkPool:
         self.match_orders(mid_price, t)
         logging.info(f"-----DARK POOL TICK-----: t={t}, active_orders={len(self.order_index)}, pending_routes={len(self.pending_lit_routes)}")
 
-    def cancel_order(self, order: Order) -> bool:
-        if order.order_id not in self.order_index:
-            logging.warning(f"-----WARNING: ORDER NOT FOUND-----: Order not found in order index: order_id: {order.order_id}")
+    def cancel_order(self, order_id: int) -> bool:
+        if order_id not in self.order_index:
+            logging.warning(f"-----WARNING: ORDER NOT FOUND-----: Order not found in order index: order_id: {order_id}")
             return False
 
-        self.cancelled_ids.add(order.order_id)
+        self.cancelled_ids.add(order_id)
 
-        del self.order_index[order.order_id]
-        logging.info(f"-----ORDER CANCELLED-----: order_id: {order.order_id}")
+        del self.order_index[order_id]
+        logging.info(f"-----ORDER CANCELLED-----: order_id: {order_id}")
         return True
 
     def has_order(self) -> bool:
@@ -220,7 +222,7 @@ class DarkPool:
             logging.warning(f"-----WARNING: INVALID ASK QTY-----: Negative queue depth detected: ask_qty: {ask_qty}")
             return 0, 0
 
-        return (bid_qty, ask_qty)
+        return bid_qty, ask_qty
 
     def recent_volume(self, current_ts: int, lookback: int) -> int:
         lookback_start = current_ts - self.tape_delay
@@ -254,7 +256,7 @@ class DarkPool:
 
         for execute_at, lit_order in pending_orders:
             original_qty = lit_order.qty
-            lit_trades = self.lit_order_book.execute_market(lit_order)
+            lit_trades = self.lit_orderbook.execute_market(lit_order)
             filled_qty = sum(trade.qty for trade in lit_trades)
             unfilled_qty = original_qty - filled_qty
             logging.info(
@@ -284,7 +286,7 @@ class DarkPool:
                         trader_id=order.trader_id,
                         side=order.side,
                         qty=order.qty,
-                        price=0,
+                        price=None,
                         ts=current_ts,
                     )
                     execute_at = current_ts + self.routing_delay
