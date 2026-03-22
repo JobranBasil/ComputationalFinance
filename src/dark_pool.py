@@ -266,7 +266,39 @@ class DarkPool:
                 )
 
     def _expire_stale_orders(self, current_ts: int) -> List[LitOrder]:
-        # todo: implement
-        pass
+        routed_orders: List[LitOrder] = []
+
+        for queue in (self.bids, self.asks):
+            remaining: Deque[Order] = deque()
+            while queue:
+                order = queue.popleft()
+
+                if order.order_id in self.cancelled_ids:
+                    self.cancelled_ids.discard(order.order_id)
+                    continue
+                order_age = current_ts - order.ts
+
+                if order_age >= self.max_resting_ticks:
+                    lit_order = LitOrder(
+                        order_id=order.order_id,
+                        trader_id=order.trader_id,
+                        side=order.side,
+                        qty=order.qty,
+                        price=0,
+                        ts=current_ts,
+                    )
+                    execute_at = current_ts + self.routing_delay
+                    self.pending_lit_routes.append((execute_at, lit_order))
+                    self.order_index.pop(order.order_id, None)
+
+                    logging.info(
+                        f"-----STALE DARK POOL ORDER SCHEDULED FOR LIT BOOK-----: order_id: {order.order_id}, trader_id: {order.trader_id}, side: {order.side}, qty: {order.qty}, age: {order_age} ticks, execute_at: {execute_at}"
+                    )
+                    routed_orders.append(lit_order)
+                else:
+                    remaining.append(order)
+            queue.extend(remaining)
+
+        return routed_orders
 
 
