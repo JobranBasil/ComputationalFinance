@@ -4,6 +4,9 @@ import logging
 from dataclasses import dataclass
 from collections import deque
 from typing import Deque, List, Dict, Optional, Literal, Set, Any
+
+from contourpy.util.bokeh_util import filled_to_bokeh
+
 from .orderbook import Order as LitOrder
 
 Side = Literal['buy', 'sell']
@@ -203,7 +206,6 @@ class DarkPool:
         return len(self.order_index) > 0
 
     def queue_depth(self) -> tuple[int, int]:
-        # todo: commit and push
         bid_qty = sum(
             order.qty for order in self.order_index.values() if order.side == "buy"
         )
@@ -213,10 +215,10 @@ class DarkPool:
 
         if bid_qty < 0:
             logging.warning(f"-----WARNING: INVALID BID QTY-----: Negative queue depth detected: bid_qty: {bid_qty}")
-            return (0, 0)
+            return 0, 0
         if ask_qty < 0:
             logging.warning(f"-----WARNING: INVALID ASK QTY-----: Negative queue depth detected: ask_qty: {ask_qty}")
-            return (0, 0)
+            return 0, 0
 
         return (bid_qty, ask_qty)
 
@@ -243,8 +245,25 @@ class DarkPool:
         )
 
     def _process_pending_routes(self, current_ts: int):
-        # todo: implement
-        pass
+        pending_orders = [
+            (ts,order) for ts, order in self.pending_lit_routes if current_ts >= ts
+        ]
+        self.pending_lit_routes = [
+            (ts, order) for ts, order in self.pending_lit_routes if current_ts < ts
+        ]
+
+        for execute_at, lit_order in pending_orders:
+            original_qty = lit_order.qty
+            lit_trades = self.lit_order_book.execute_market(lit_order)
+            filled_qty = sum(trade.qty for trade in lit_trades)
+            unfilled_qty = original_qty - filled_qty
+            logging.info(
+                f"-----PENDING ROUTE EXECUTED-----: order_id: {lit_order.order_id}, trader_id: {lit_order.trader_id}, side: {lit_order.side}, qty: {original_qty}, filled: {filled_qty}, unfilled: {unfilled_qty}, scheduled_at: {execute_at}, executed_at: {current_ts}"
+            )
+            if unfilled_qty > 0:
+                logging.warning(
+                    f"-----PENDING ROUTE PARTIALLY FILLED-----: order_id: {lit_order.order_id}, unfilled_qty: {unfilled_qty} (lit book too thin)"
+                )
 
     def _expire_stale_orders(self, current_ts: int) -> List[LitOrder]:
         # todo: implement
