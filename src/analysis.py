@@ -42,6 +42,8 @@ import importlib
 _dp_mod = importlib.import_module("src.dark_pool")
 DarkPool = _dp_mod.DarkPool
 
+plt.style.use("seaborn-v0_8-whitegrid")
+
 
 # ---------------------------------------------------------------------------
 # Single seeded run
@@ -201,6 +203,192 @@ def plot_baseline(results_df: pd.DataFrame, out_dir: str = ".") -> None:
     summary.loc["se"] = results_df[scalar_cols].std() / np.sqrt(len(results_df))
     summary.to_csv(os.path.join(out_dir, "baseline_summary.csv"))
     print(f"Baseline plots and summary saved to {out_dir}/")
+
+
+# ---------------------------------------------------------------------------
+# Validation: informed trader participation rate vs mispricing
+# ---------------------------------------------------------------------------
+
+def _build_and_run_informed_rate(seed: int, participation_rate: float,
+                                  steps: int = 1000) -> dict:
+    """
+    Same model as _build_and_run but with a configurable informed trader
+    participation rate. Returns avg_mispricing for the given seed and rate.
+    """
+
+    fundamental = FundamentalProcess(
+        start=100.075,
+        sigma_v=0.03,
+        rng=np.random.default_rng(seed),
+    )
+
+    book = OrderBook(tick=0.01, max_depth_levels=20)
+    seed_initial_book(book, best_bid=100.05, best_ask=100.10, levels=10,
+                      rng=np.random.default_rng(seed + 1))
+
+    agents = [
+        NoiseTrader(trader_id=1,  rng=np.random.default_rng(seed + 10)),
+        NoiseTrader(trader_id=2,  rng=np.random.default_rng(seed + 11)),
+        NoiseTrader(trader_id=3,  rng=np.random.default_rng(seed + 12)),
+        NoiseTrader(trader_id=4,  rng=np.random.default_rng(seed + 13)),
+        NoiseTrader(trader_id=5,  rng=np.random.default_rng(seed + 14)),
+        NoiseTrader(trader_id=6,  rng=np.random.default_rng(seed + 15)),
+        MarketMaker(trader_id=7,  rng=np.random.default_rng(seed + 16)),
+        InstitutionalTrader(trader_id=8,  use_iceberg_prob=0, dark_fraction=0,
+                            rng=np.random.default_rng(seed + 17)),
+        InstitutionalTrader(trader_id=9,  use_iceberg_prob=0, dark_fraction=0,
+                            rng=np.random.default_rng(seed + 18)),
+        InformedTrader(
+            trader_id=10,
+            rng=np.random.default_rng(seed + 19),
+            fundamental=fundamental,
+            sigma_s=0.08,
+            participation_rate=participation_rate,
+            dark_fraction=0,
+        ),
+        MarketMakerAS(
+            trader_id=11,
+            rng=np.random.default_rng(seed + 20),
+            horizon=5000,
+            kappa=50,
+            gamma=0.1,
+            sigma=0.05,
+        ),
+    ]
+
+    dark_pool = DarkPool(
+        lit_orderbook=book,
+        max_resting_ticks=50,
+        routing_delay=5,
+        tape_delay=5,
+    )
+
+    _, book_df, _, _, _ = run_simulation(
+        book, agents, dark_pool, steps=steps, fundamental=fundamental,
+    )
+
+    book_df = add_market_analytics(book_df, vol_window=10)
+
+    fund_series    = np.array(fundamental.history)[:len(book_df)]
+    mid_series     = book_df["Mid"].values
+    avg_mispricing = float(np.nanmean(np.abs(fund_series - mid_series)))
+
+    return {
+        "seed":               seed,
+        "participation_rate": participation_rate,
+        "avg_mispricing":     avg_mispricing,
+    }
+
+
+def run_validation_informed_rate(
+    participation_rates: List[float] | None = None,
+    n_runs:              int  = 20,
+    steps:               int  = 1000,
+    base_seed:           int  = 200,
+    batch_size:          int  = 5,
+    silent:              bool = False,
+) -> pd.DataFrame:
+    """
+    Monte Carlo validation: run the model at two informed trader participation
+    rates (baseline 0.4 and high 1.0) for n_runs each and compare avg mispricing.
+
+    Parameters
+    ----------
+    participation_rates : list of rates to test, default [0.4, 1.0]
+    n_runs              : Monte Carlo runs per rate
+    steps               : simulation timesteps per run
+    base_seed           : base random seed
+    batch_size          : parallel batch size
+    silent              : suppress progress output
+
+    Returns
+    -------
+    pd.DataFrame with one row per (seed, participation_rate).
+    """
+
+    if participation_rates is None:
+        participation_rates = [0.4, 1.0]
+
+    all_args = [
+        (base_seed + i + r_idx * 1000, rate, steps)
+        for r_idx, rate in enumerate(participation_rates)
+        for i in range(n_runs)
+    ]
+
+    all_results = []
+    for batch_start in range(0, len(all_args), batch_size):
+        batch = all_args[batch_start : batch_start + batch_size]
+        if not silent:
+            print(
+                f"Validation batch [{batch_start+1}--{batch_start+len(batch)}/{len(all_args)}]",
+                flush=True,
+            )
+        with Pool(processes=min(cpu_count(), len(batch))) as pool:
+            batch_results = pool.starmap(_build_and_run_informed_rate, batch)
+        all_results.extend(batch_results)
+
+    return pd.DataFrame(all_results)
+
+
+def plot_validation_informed_rate(
+    results_df: pd.DataFrame,
+    out_dir:    str = ".",
+) -> None:
+    """
+    Side-by-side boxplots of avg_mispricing for each participation rate,
+    with mean annotated. Validates that higher informed participation
+    reduces mispricing (Kyle 1985).
+    """
+
+    os.makedirs(out_dir, exist_ok=True)
+
+    rates  = sorted(results_df["participation_rate"].unique())
+    data   = [results_df[results_df["participation_rate"] == r]["avg_mispricing"].values
+               for r in rates]
+    means  = [d.mean() for d in data]
+    labels = [f"$\\rho = {r:.1f}$" for r in rates]
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    bp = ax.boxplot(
+        data,
+        labels=labels,
+        patch_artist=True,
+        widths=0.4,
+        boxprops=dict(alpha=0.6),
+    )
+
+    colours = ["steelblue", "crimson"]
+    for patch, colour in zip(bp["boxes"], colours):
+        patch.set_facecolor(colour)
+
+    for i, (mean, colour) in enumerate(zip(means, colours), start=1):
+        ax.axhline(mean, xmin=(i - 1) / len(rates) + 0.05,
+                   xmax=i / len(rates) - 0.05,
+                   color=colour, linestyle="--", linewidth=1.5,
+                   label=f"Mean ($\\rho={rates[i-1]:.1f}$) = {mean:.4f}")
+        ax.scatter([i] * len(data[i - 1]), data[i - 1],
+                   color=colour, alpha=0.5, zorder=3)
+
+    ax.set_ylabel("Avg $|$Fundamental $-$ Mid$|$ (Mispricing)", fontsize=12)
+    ax.set_xlabel("Informed Trader Participation Rate", fontsize=12)
+    ax.set_title(
+        "Effect of Informed Trader Participation Rate on Mispricing\n"
+        f"({len(results_df) // len(rates)} Monte Carlo runs per rate)",
+        fontsize=13,
+    )
+    ax.legend(fontsize=10)
+    ax.grid(True, linestyle="--", alpha=0.4)
+
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, "validation_informed_rate.png"), dpi=150)
+    plt.close(fig)
+    print(f"Saved: validation_informed_rate.png")
+
+    # print summary
+    for rate, d, mean in zip(rates, data, means):
+        se = d.std() / np.sqrt(len(d))
+        print(f"  rho={rate:.1f}  mean_mispricing={mean:.4f}  SE={se:.4f}")
 
 
 # ---------------------------------------------------------------------------
@@ -433,7 +621,19 @@ if __name__ == "__main__":
     print(baseline_df[["mean_spread", "mean_depth", "volatility", "avg_mispricing"]].describe())
     plot_baseline(baseline_df, out_dir=out_dir)
 
-    # --- 2. Sensitivity analysis ---
+    # --- 2. Validation: informed trader participation rate ---
+    print("\n=== VALIDATION: Informed Trader Participation Rate ===")
+    validation_df = run_validation_informed_rate(
+        participation_rates = [0.4, 1.0],
+        n_runs              = 20,
+        steps               = 1000,
+        base_seed           = 200,
+        batch_size          = 5,
+    )
+    validation_df.to_csv(os.path.join(out_dir, "validation_informed_rate.csv"), index=False)
+    plot_validation_informed_rate(validation_df, out_dir=out_dir)
+
+    # --- 3. Sensitivity analysis ---
     print("\n=== SENSITIVITY ANALYSIS ===")
     sensitivity_df = run_sensitivity(
         dark_frac_values    = np.arange(0, 1.01, 0.2).tolist(),
