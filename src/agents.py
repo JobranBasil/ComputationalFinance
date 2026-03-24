@@ -52,11 +52,22 @@ class BaseAgent:
     # NEW: optional iceberg currently being executed by this agent
     iceberg: Optional[IcebergOrder] = None
 
+    # track last valid mid so agents never snap to a hardcoded price
+    _last_valid_mid: float = 100.0
+
     def new_oid(self) -> int:
         oid = self._next_order_id
         self._next_order_id += 1
         # make ids globally unique-ish by namespacing with trader_id
         return int(self.trader_id * 1_000_000 + oid)
+
+    def _get_mid(self, book: OrderBook) -> float:
+        """Return live mid if available, otherwise last known mid."""
+        mid = book.mid_price()
+        if np.isfinite(mid) and mid > 0:
+            self._last_valid_mid = mid
+            return mid
+        return self._last_valid_mid
 
     def act(self, t: int, book: OrderBook) -> Action:
         return None
@@ -129,9 +140,9 @@ class NoiseTrader(BaseAgent):
         trader_id: int,
         rng: np.random.Generator,
         participation_rate: float = 0.9,
-        market_prob: float = 0.4,
+        market_prob: float = 0.5,
         sign_persistence: float = 0.7,
-        max_depth_ticks: int = 20,
+        max_depth_ticks: int = 10,
     ):
         super().__init__(trader_id, rng)
         self.participation_rate = participation_rate
@@ -162,10 +173,7 @@ class NoiseTrader(BaseAgent):
             return Order(self.new_oid(), self.trader_id, side, qty, price=None, ts=t)
 
         # limit order around mid
-        mid = book.mid_price()
-        if not np.isfinite(mid):
-            print('--------------------------------------- BAD MIND ---------------------------------------------')
-            mid = 100.0
+        mid = self._get_mid(book)
 
         tick = book.tick
         offset_ticks = int(self.rng.integers(0, self.max_depth_ticks + 1))
@@ -180,15 +188,21 @@ class NoiseTrader(BaseAgent):
 
 class MarketMakerAS(BaseAgent):
     """
-    Market maker with inventory risk adjusted spread (Avellaneda-Stoikov)
+    Market maker with inventory risk adjusted spread (Avellaneda-Stoikov).
+
+    Key fix vs original: the MM now behaves like a designated market maker
+    with a two-sided quoting obligation.
     """
+
     def __init__(self,
                  trader_id: int,
                  rng: np.random.Generator,
-                 horizon: float, # Time horizon (T)
-                 kappa: float, # Order‐book liquidity parameter (κ)
-                 gamma: float, # Inventory risk aversion (γ)
-                 sigma: float, # Market volatility (σ)
+                 horizon: float,
+                 kappa: float,
+                 gamma: float,
+                 sigma: float,
+                 max_skew_ticks: int = 15,
+                 inventory_limit: int = 200,
                  ):
         super().__init__(trader_id, rng)
         self.kappa = kappa
@@ -198,78 +212,90 @@ class MarketMakerAS(BaseAgent):
         self.inventory = 0
         self.last_bid_id = None
         self.last_ask_id = None
-        self.ttl = 50  # number of ticks before cancellation
-        self.active_orders: dict = {}  
+        self.ttl = 50
+        self.active_orders: dict = {}
         self.cancel = 0
         self.trades = 0
+        self.max_skew_ticks = max_skew_ticks
+        self.inventory_limit = inventory_limit
+        self.last_valid_mid: float = 100.0
 
     def update_inventory(self, trade: Trade):
         """Update inventory based on executed trade."""
         if trade.maker_trader_id == self.trader_id:
             if trade.aggressor_side == "buy":
-                self.inventory -= trade.qty  
+                self.inventory -= trade.qty
             else:
-                self.inventory += trade.qty  
+                self.inventory += trade.qty
         elif trade.taker_trader_id == self.trader_id:
             if trade.aggressor_side == "buy":
-                self.inventory += trade.qty  
+                self.inventory += trade.qty
             else:
-                self.inventory -= trade.qty  
-    
-    
+                self.inventory -= trade.qty
+
     def optimal_spread(self, time_remaining: float) -> float:
         """Calculate optimal spread based on Avellaneda-Stoikov formula."""
-        term1 = self.gamma * self.sigma**2 * time_remaining
+        term1 = self.gamma * self.sigma ** 2 * time_remaining
         term2 = (2.0 / self.gamma) * math.log(1.0 + self.gamma / self.kappa)
         return term1 + term2
-    
-    def cancel_stale_orders(self, book: OrderBook, actions: list) -> None:
+
+    def _cancel_all_live(self, book: OrderBook, actions: list) -> None:
+        """Cancel every outstanding order this MM has in the book."""
         stale = []
         for oid, info in self.active_orders.items():
             info["age"] += 1
             if oid not in book.order_index:
-                # disappeared - filled OR pruned, just free the slot
                 stale.append(oid)
-
             elif info["age"] >= self.ttl:
                 actions.append(("cancel", oid))
                 stale.append(oid)
                 self.cancel += 1
+            else:
+                # FIX: also cancel non-stale orders so we can re-quote
+                # at fresh prices every tick (two-sided obligation)
+                actions.append(("cancel", oid))
+                stale.append(oid)
 
         for oid in stale:
-            info = self.active_orders.pop(oid)
-            if info["side"] == "buy":
-                self.last_bid_id = None
-            else:
-                self.last_ask_id = None
+            self.active_orders.pop(oid, None)
+
+        self.last_bid_id = None
+        self.last_ask_id = None
 
     def act(self, t: int, book: OrderBook) -> Action:
         actions = []
-        self.cancel_stale_orders(book, actions)
 
-        # Calculate mid-price and optimal spread
+        # ── step 1: cancel ALL existing quotes ──
+        self._cancel_all_live(book, actions)
+
+        # ── step 2: determine mid price ──
+        mid_price = self._get_mid(book)
         bb, ba = book.best_bid(), book.best_ask()
-        if bb <= 0 or not np.isfinite(ba):
-            mid_price = 100.0  # default mid if no quotes
-        else:
-            mid_price = (bb + ba) / 2
 
-        #Calculate reservation price and optimal quotes
+        # ── step 3: Avellaneda-Stoikov reservation price ──
         time_remaining = max(0.1, 1.0 - t / self.T)
-        rerserve_price = mid_price - self.inventory * self.gamma * self.sigma**2 * time_remaining
+        raw_skew = self.inventory * self.gamma * self.sigma ** 2 * time_remaining
+
+        # FIX: cap the skew so the MM never drifts too far from mid
+        max_skew = self.max_skew_ticks * book.tick
+        capped_skew = max(-max_skew, min(raw_skew, max_skew))
+
+        reserve_price = mid_price - capped_skew
         optimal_spread = self.optimal_spread(time_remaining)
 
-        bid_price = rerserve_price - optimal_spread / 2
-        ask_price = rerserve_price + optimal_spread / 2
-        #prevent extreme quotes by bounding within a reasonable range around mid
-        #max_offset = 10* book.tick
-        #bid_price = max(bid_price, mid_price - max_offset)
-        #ask_price = min(ask_price, mid_price + max_offset)
+        bid_price = reserve_price - optimal_spread / 2
+        ask_price = reserve_price + optimal_spread / 2
+
+        # ── step 4: safety clamps ──
+        # prevent extreme quotes: bound within a reasonable range around mid
+        max_offset = self.max_skew_ticks * book.tick
+        bid_price = max(bid_price, mid_price - max_offset)
+        ask_price = min(ask_price, mid_price + max_offset)
 
         # prevent bid above best ask or ask below best bid
-        if bid_price >= ba:
+        if np.isfinite(ba) and bid_price >= ba:
             bid_price = ba - book.tick
-        if ask_price <= bb:
+        if np.isfinite(bb) and bb > 0 and ask_price <= bb:
             ask_price = bb + book.tick
 
         # prevent crossed quotes
@@ -277,62 +303,76 @@ class MarketMakerAS(BaseAgent):
             bid_price = mid_price - book.tick
             ask_price = mid_price + book.tick
 
-        print(f"MarketMakerAS act: t={t}, inventory={self.inventory}, mid={mid_price:.2f}, bid_px={bid_price:.2f}, ask_px={ask_price:.2f}")
+        # ── step 5: inventory-aware sizing ──
+        base_qty = 20
+        if abs(self.inventory) > self.inventory_limit:
+            # skew qty to pull inventory back toward zero
+            # if short (inv < 0): increase bid qty, decrease ask qty
+            # if long  (inv > 0): increase ask qty, decrease bid qty
+            ratio = min(abs(self.inventory) / self.inventory_limit, 3.0)
+            if self.inventory < 0:
+                bid_qty = int(base_qty * ratio)
+                ask_qty = max(5, int(base_qty / ratio))
+            else:
+                bid_qty = max(5, int(base_qty / ratio))
+                ask_qty = int(base_qty * ratio)
+        else:
+            bid_qty = base_qty
+            ask_qty = base_qty
 
-        qty = 20
-        #Update and quote the side that got filled or cancelled
-        post_bid = self.last_bid_id is None
-        post_ask = self.last_ask_id is None
-        
-        #post_bid = True
-        #post_ask = True 
-        if post_bid:
-            bid = Order(self.new_oid(), self.trader_id, "buy", qty, price=bid_price, ts=t)
-            actions.append(bid)
-            self.active_orders[bid.order_id] = {
-                "side": "buy",
-                "price": bid_price,
-                "age": 0,
-                "qty": qty}
-            self.last_bid_id = bid.order_id
-    
-        if post_ask:
-            ask = Order(self.new_oid(), self.trader_id, "sell", qty, price=ask_price, ts=t)
-            actions.append(ask)
-            self.active_orders[ask.order_id] = {
-                "side": "sell",
-                "price": ask_price,
-                "age": 0,
-                "qty": qty}
-            self.last_ask_id = ask.order_id
+        print(f"MarketMakerAS act: t={t}, inventory={self.inventory}, "
+              f"mid={mid_price:.2f}, bid_px={bid_price:.2f}, ask_px={ask_price:.2f}, "
+              f"bid_qty={bid_qty}, ask_qty={ask_qty}")
+
+        # ── step 6: ALWAYS post both sides ──
+        bid = Order(self.new_oid(), self.trader_id, "buy", bid_qty,
+                    price=bid_price, ts=t)
+        actions.append(bid)
+        self.active_orders[bid.order_id] = {
+            "side": "buy", "price": bid_price, "age": 0, "qty": bid_qty}
+        self.last_bid_id = bid.order_id
+
+        ask = Order(self.new_oid(), self.trader_id, "sell", ask_qty,
+                    price=ask_price, ts=t)
+        actions.append(ask)
+        self.active_orders[ask.order_id] = {
+            "side": "sell", "price": ask_price, "age": 0, "qty": ask_qty}
+        self.last_ask_id = ask.order_id
+
         print(f'Cancellations:{self.cancel}')
 
         return actions if actions else None
 
 class MarketMaker(BaseAgent):
     """
-    Minimal placeholder:
-    - posts one bid and one ask at the current bests (degenerate, but exercises add_limit)
-    - occasionally cancels a random existing order from the book
+    Simple background market maker:
+    - posts one limit order per action around mid
+    - configurable spread range and order size
     """
 
-    def act(self, t: int, book: OrderBook) -> Action:
-        #if self.rng.random() > 0.9:
-            #return None
+    def __init__(
+        self,
+        trader_id: int,
+        rng: np.random.Generator,
+        max_spread_ticks: int = 10,
+        min_qty: int = 1,
+        max_qty: int = 10,
+    ):
+        super().__init__(trader_id, rng)
+        self.max_spread_ticks = max_spread_ticks
+        self.min_qty = min_qty
+        self.max_qty = max_qty
 
+    def act(self, t: int, book: OrderBook) -> Action:
         r = self.rng.random()
 
         side: Side = "buy" if r < 0.55 else "sell"
-        qty = int(self.rng.integers(1, 10))
-        bb, ba = book.best_bid(), book.best_ask()
+        qty = int(self.rng.integers(self.min_qty, self.max_qty + 1))
 
-        # limit order around mid
-        mid = book.mid_price()
-        if not np.isfinite(mid):
-            mid = 100.0
+        mid = self._get_mid(book)
 
         tick = book.tick
-        offset_ticks = int(self.rng.integers(0, 10))
+        offset_ticks = int(self.rng.integers(0, self.max_spread_ticks + 1))
 
         if side == "buy":
             px = mid - offset_ticks * tick
@@ -344,9 +384,9 @@ class MarketMaker(BaseAgent):
 
 class InstitutionalTrader(BaseAgent):
     def __init__(self, trader_id: int, rng: np.random.Generator,
-                 use_iceberg_prob: float,
-                 dark_fraction: float,
-                 participation_rate: float = 0.10,
+                 participation_rate: float = 0.05,
+                 use_iceberg_prob: float = 0.8,
+                 dark_fraction: float = 0.05,
                  peak_range=(30, 50),
                  total_range=(100, 150),
                  price_mode: str = "join"):  # "join" or "improve"
@@ -431,13 +471,13 @@ class InformedTrader(BaseAgent):
         trader_id: int,
         rng: np.random.Generator,
         fundamental: FundamentalProcess,
-        participation_rate: float,
-        dark_fraction: float,
         sigma_s: float = 0.10,
-        entry_threshold: float = 0.1,
+        entry_threshold: float = 0.05,
         aggressive_threshold: float = 0.20,
         base_qty: int = 10,
-        max_qty: int = 50 # <-- 20% of volume routed to dark
+        max_qty: int = 50,
+        participation_rate: float = 0.8,
+        dark_fraction: float = 0.20,   # <-- 20% of volume routed to dark
     ):
         super().__init__(trader_id, rng)
         self.fundamental = fundamental
@@ -459,9 +499,7 @@ class InformedTrader(BaseAgent):
 
         signal = self.fundamental.observe(self.sigma_s, self.rng)
 
-        mid = book.mid_price()
-        if not np.isfinite(mid):
-            mid = self.fundamental.value
+        mid = self._get_mid(book)
 
         edge = signal - mid
         if abs(edge) < self.entry_threshold:

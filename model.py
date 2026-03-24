@@ -190,7 +190,10 @@ class MarketModel(mesa.Model):
             )
 
         self._inner_agents.append(
-            MarketMaker(trader_id=10, rng=np.random.default_rng(_next_seed()))
+            MarketMaker(
+                trader_id=10,
+                rng=np.random.default_rng(_next_seed()),
+            )
         )
 
         self.mmas = MarketMakerAS(
@@ -230,7 +233,10 @@ class MarketModel(mesa.Model):
             )
 
         # register Mesa wrappers (needed for mesa internals)
+        # and initialize last-valid-mid to actual starting mid
+        initial_mid = (start_price + 0.05 + start_price + 0.10) / 2
         for ia in self._inner_agents:
+            ia._last_valid_mid = initial_mid
             MesaAgentWrapper(self, ia)
 
         # ── time-series storage ──
@@ -238,6 +244,8 @@ class MarketModel(mesa.Model):
         self.snapshots: list[dict] = []
         self.latest_snapshot: dict | None = None
         self._t = 0
+        self._last_mid = initial_mid      # model-level tracker for gapless charts
+        self._last_spread = 0.05
 
     # ────────────────────────────────────────────────────────────────────
 
@@ -299,18 +307,28 @@ class MarketModel(mesa.Model):
 
         vol = sum(tr.qty for tr in trades_this_step if hasattr(tr, "qty"))
 
-        # mispricing = |mid - fundamental|
-        mispricing = abs(mid - self.fundamental.value) if np.isfinite(mid) else None
+        # gapless tracking: always use last valid value
+        if np.isfinite(mid):
+            self._last_mid = mid
+        else:
+            mid = self._last_mid
+
+        if np.isfinite(sp) and sp >= 0:
+            self._last_spread = sp
+        else:
+            sp = self._last_spread
+
+        mispricing = abs(mid - self.fundamental.value)
 
         self.history.append({
             "t": t,
-            "mid": mid if np.isfinite(mid) else None,
+            "mid": mid,
             "fundamental": self.fundamental.value,
-            "spread": sp if np.isfinite(sp) else None,
-            "best_bid": bb if np.isfinite(bb) else None,
-            "best_ask": ba if np.isfinite(ba) else None,
+            "spread": sp,
+            "best_bid": bb if np.isfinite(bb) else mid - sp / 2,
+            "best_ask": ba if np.isfinite(ba) else mid + sp / 2,
             "obi": self.book.book_imbalance() if (bid_d + ask_d) > 0 else 0,
-            "microprice": mp if np.isfinite(mp) else None,
+            "microprice": mp if np.isfinite(mp) else mid,
             "mispricing": mispricing,
             "volume": vol,
             "mmas_inventory": self.mmas.inventory,
