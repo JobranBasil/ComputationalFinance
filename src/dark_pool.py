@@ -11,9 +11,7 @@ Side = Literal['buy', 'sell']
 
 @dataclass
 class Order:
-    """
-    Represents an order in the dark pool.
-    """
+    # dark pool order
 
     order_id: int
     trader_id: int
@@ -23,9 +21,7 @@ class Order:
 
 @dataclass
 class Trade:
-    """
-    Represents a trade in the dark pool.
-    """
+    # dark pool trade
 
     price: float
     qty: int
@@ -33,9 +29,6 @@ class Trade:
 
 
 class DarkPool:
-    """
-    Represents a dark pool for trading.
-    """
 
     def __init__(self, lit_orderbook, max_resting_ticks: int = 10, routing_delay: int = 10, tape_delay: int = 5):
         self.lit_orderbook = lit_orderbook
@@ -85,21 +78,18 @@ class DarkPool:
         while self.bids and self.asks:
 
             while self.bids and self.bids[0].order_id in self.cancelled_ids:
-                # Remove cancelled orders from the front of the bids queue
+                # skip cancelled
                 logging.info(f"-----CANCELLED ORDER REMOVED FROM DP BID QUEUE-----: Removing cancelled order from bids queue: {self.bids[0].order_id}")
                 self.cancelled_ids.discard(self.bids.popleft().order_id)
 
             while self.asks and self.asks[0].order_id in self.cancelled_ids:
-                # Remove cancelled orders from the front of the asks queue
                 logging.info(f"-----CANCELLED ORDER REMOVED FROM DP ASK QUEUE-----: Removing cancelled order from asks queue: {self.asks[0].order_id}")
                 self.cancelled_ids.discard(self.asks.popleft().order_id)
 
             if not self.bids or not self.asks:
-                # No more orders to match
                 logging.warning(f"-----WARNING-----: No more orders to match: bids: {len(self.bids)}, asks: {len(self.asks)}")
                 break
 
-            # Get the best bid and ask
             bid = self.bids[0]
             ask = self.asks[0]
 
@@ -109,7 +99,7 @@ class DarkPool:
                 while self.asks[0].order_id != top_ask_id and self.asks[0].trader_id == bid.trader_id:
                     self.asks.rotate(-1)
                 if self.asks[0].order_id == top_ask_id:
-                    # No more matching asks for this bid
+                    # no match
                     logging.warning(f"-----WARNING-----: No more matching asks for this bid: bid: {bid.trader_id}, ask: {ask.trader_id}")
                     break
                 logging.warning(f"-----WARNING-----: self.asks[0].trader_id == bid.trader_id: bid: {bid.trader_id}, ask: {ask.trader_id}")
@@ -120,24 +110,24 @@ class DarkPool:
                 logging.warning(f"-----WARNING-----: trade_qty <= 0: bid: {bid.trader_id}, ask: {ask.trader_id}, qty: {trade_qty}")
                 break
 
-            # create a trade at the mid price with the matched quantity
+            # trade at mid
             trade = Trade(
                 price = mid_price,
                 qty = trade_qty,
                 timestamp = timestamp,
             )
 
-            # record the trade in the tape and the list of trades for this tick
+            # record trade
             trades.append(trade)
             self.trade_tape.append(trade)
 
             logging.info(f"-----DARK POOL TRADE -----: buyer: {bid.trader_id}, seller: {ask.trader_id}, price: {mid_price}, qty: {trade_qty}, timestamp: {timestamp}")
 
-            # reduce the qty of the matched orders to account for partial fills
+            # partial fills
             bid.qty -= trade_qty
             ask.qty -= trade_qty
 
-            # check if the matched orders are now empty
+            # remove filled
             if bid.qty == 0:
                 self.order_index.pop(self.bids.popleft().order_id, None)
             if ask.qty == 0:

@@ -27,7 +27,7 @@ DarkOrder = _dp_mod.Order
 # ---------------------------------------------------------------------------
 
 def apply_action(book: OrderBook, action: Action | list) -> list:
-    """Apply an agent action to the order book. Returns list of trades."""
+    # apply action to book
     if action is None:
         return []
 
@@ -54,7 +54,7 @@ def seed_initial_book(
     levels: int = 20,
     rng: np.random.Generator | None = None,
 ) -> None:
-    """Seed the order book with synthetic resting liquidity around an initial spread."""
+    # seed initial liquidity
     rng = rng or np.random.default_rng(42)
     for i in range(levels):
         book.add_limit_post_only(Order(
@@ -232,7 +232,7 @@ def plot_demand_curve(bids: list[tuple], asks: list[tuple], out_path: str) -> No
 
 
 def plot_mmAS_inventory(book_df: pd.DataFrame, out_path: str) -> None:
-    """Plot MarketMakerAS inventory over simulation time."""
+    # plot MMAS inventory
     if "MMAS_Inventory" not in book_df.columns:
         print("No MMAS_Inventory column found in book_df — skipping plot.")
         return
@@ -272,7 +272,7 @@ def plot_mid_vs_fundamental(
     fundamental_history: list[float],
     out_path: str,
 ) -> None:
-    """Plot mid-price vs fundamental value over simulation time."""
+    # mid vs fundamental
     fig, ax = plt.subplots(figsize=(14, 5))
 
     fund_series = fundamental_history[:len(book_df)]
@@ -365,7 +365,7 @@ def run_simulation(
                     })
                     trades_this_step.append(tr)
 
-            # institutional traders also submit to the dark pool
+            # dark pool submissions
             if isinstance(agent, InstitutionalTrader) or isinstance(agent, InformedTrader):
                 dp_trades = agent.act_dark(t, dark_pool)
                 if dp_trades:
@@ -376,7 +376,7 @@ def run_simulation(
                             "Qty": tr.qty,
                         })
 
-        # Notify MarketMakerAS of fills
+        # notify MMAS of fills
         mmAS_agent = next((agent for agent in agents if isinstance(agent, MarketMakerAS)), None)
         for trade in trades_this_step:
             if mmAS_agent is not None:
@@ -398,7 +398,7 @@ def run_simulation(
                     ):
                         mmAS_agent.last_ask_id = None
 
-        # advance dark pool clock, expiry and routing fire here
+        # dark pool tick
         dark_pool.tick(t)
 
         bb, ba = book.best_bid(), book.best_ask()

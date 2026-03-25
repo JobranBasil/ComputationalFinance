@@ -13,16 +13,10 @@ from .orderbook import Order, OrderBook, Side, Trade
 
 Action = Union[None, Order, Tuple[Literal["cancel"], int]]
 
-# -------------------- NEW: Iceberg state (strategy-only) --------------------
+# iceberg state
 @dataclass
 class IcebergOrder:
-    """
-    Strategy-only iceberg:
-    - 'remaining' is the hidden quantity left to execute (not shown in the book)
-    - each visible slice is a normal LIMIT order with size=min(peak, remaining)
-    - we consider a slice 'filled' when its order_id disappears from book.order_index
-      (simple + minimal; does not require OrderBook edits)
-    """
+    # strategy-only iceberg
     side: Side
     remaining: int
     peak: int
@@ -49,20 +43,20 @@ class BaseAgent:
     rng: np.random.Generator
     _next_order_id: int = 1
 
-    # NEW: optional iceberg currently being executed by this agent
+    # active iceberg
     iceberg: Optional[IcebergOrder] = None
 
-    # track last valid mid so agents never snap to a hardcoded price
+    # last valid mid
     _last_valid_mid: float = 100.0
 
     def new_oid(self) -> int:
         oid = self._next_order_id
         self._next_order_id += 1
-        # make ids globally unique-ish by namespacing with trader_id
+        # namespace with trader_id
         return int(self.trader_id * 1_000_000 + oid)
 
     def _get_mid(self, book: OrderBook) -> float:
-        """Return live mid if available, otherwise last known mid."""
+        # live mid or last known
         mid = book.mid_price()
         if np.isfinite(mid) and mid > 0:
             self._last_valid_mid = mid
@@ -72,12 +66,9 @@ class BaseAgent:
     def act(self, t: int, book: OrderBook) -> Action:
         return None
 
-    # -------------------- NEW: iceberg helpers on BaseAgent --------------------
+    # iceberg helpers
     def iceberg_start(self, side: Side, total_qty: int, peak: int, price: float) -> None:
-        """
-        Start a new iceberg parent order for this agent.
-        The visible orders are standard LIMIT orders posted at 'price'.
-        """
+        # start new iceberg
         self.iceberg = IcebergOrder(
             side=side,
             remaining=int(total_qty),
@@ -88,30 +79,22 @@ class BaseAgent:
         )
 
     def iceberg_step(self, t: int, book: OrderBook) -> Action:
-        """
-        Advance iceberg execution by at most ONE action this step:
-        - If an active slice exists and is still in the book -> do nothing
-        - If the active slice disappeared -> treat as filled and post the next slice
-        - Repeat until remaining == 0, then clear iceberg
-
-        IMPORTANT: This keeps everything minimal and only depends on book.order_index.
-        """
+        # advance iceberg by one action
         if self.iceberg is None:
             return None
 
         ice = self.iceberg
 
-        # 1) If we have an active slice, check if it's still present in the book
+        # check if active slice still in book
         if ice.active_order_id is not None:
             if ice.active_order_id in book.order_index:
-                # Still resting (not fully filled yet) -> no new action
                 return None
             else:
-                # Slice disappeared -> assume it got filled (or removed). Continue.
+                # slice filled
                 ice.active_order_id = None
                 ice.active_slice_qty = 0
 
-        # 2) If no active slice and we still have remaining, post next slice
+        # post next slice
         if ice.remaining > 0:
             slice_qty = int(min(ice.peak, ice.remaining))
             oid = self.new_oid()
@@ -129,7 +112,7 @@ class BaseAgent:
                 ts=t,
             )
 
-        # 3) Done: nothing remaining and no active slice
+        # done
         self.iceberg = None
         return None
 
@@ -187,12 +170,7 @@ class NoiseTrader(BaseAgent):
 
 
 class MarketMakerAS(BaseAgent):
-    """
-    Market maker with inventory risk adjusted spread (Avellaneda-Stoikov).
-
-    Key fix vs original: the MM now behaves like a designated market maker
-    with a two-sided quoting obligation.
-    """
+    # avellaneda-stoikov MM
 
     def __init__(self,
                  trader_id: int,
@@ -221,7 +199,7 @@ class MarketMakerAS(BaseAgent):
         self.last_valid_mid: float = 100.0
 
     def update_inventory(self, trade: Trade):
-        """Update inventory based on executed trade."""
+        # update inventory from trade
         if trade.maker_trader_id == self.trader_id:
             if trade.aggressor_side == "buy":
                 self.inventory -= trade.qty
@@ -234,13 +212,13 @@ class MarketMakerAS(BaseAgent):
                 self.inventory -= trade.qty
 
     def optimal_spread(self, time_remaining: float) -> float:
-        """Calculate optimal spread based on Avellaneda-Stoikov formula."""
+        # A-S optimal spread
         term1 = self.gamma * self.sigma ** 2 * time_remaining
         term2 = (2.0 / self.gamma) * math.log(1.0 + self.gamma / self.kappa)
         return term1 + term2
 
     def _cancel_all_live(self, book: OrderBook, actions: list) -> None:
-        """Cancel every outstanding order this MM has in the book."""
+        # cancel all live orders
         stale = []
         for oid, info in self.active_orders.items():
             info["age"] += 1
@@ -251,8 +229,7 @@ class MarketMakerAS(BaseAgent):
                 stale.append(oid)
                 self.cancel += 1
             else:
-                # FIX: also cancel non-stale orders so we can re-quote
-                # at fresh prices every tick (two-sided obligation)
+                # re-quote every tick
                 actions.append(("cancel", oid))
                 stale.append(oid)
 
@@ -265,18 +242,18 @@ class MarketMakerAS(BaseAgent):
     def act(self, t: int, book: OrderBook) -> Action:
         actions = []
 
-        # ── step 1: cancel ALL existing quotes ──
+        # cancel existing quotes
         self._cancel_all_live(book, actions)
 
-        # ── step 2: determine mid price ──
+        # determine mid
         mid_price = self._get_mid(book)
         bb, ba = book.best_bid(), book.best_ask()
 
-        # ── step 3: Avellaneda-Stoikov reservation price ──
+        # A-S reservation price
         time_remaining = max(0.1, 1.0 - t / self.T)
         raw_skew = self.inventory * self.gamma * self.sigma ** 2 * time_remaining
 
-        # FIX: cap the skew so the MM never drifts too far from mid
+        # cap skew
         max_skew = self.max_skew_ticks * book.tick
         capped_skew = max(-max_skew, min(raw_skew, max_skew))
 
@@ -286,13 +263,12 @@ class MarketMakerAS(BaseAgent):
         bid_price = reserve_price - optimal_spread / 2
         ask_price = reserve_price + optimal_spread / 2
 
-        # ── step 4: safety clamps ──
-        # prevent extreme quotes: bound within a reasonable range around mid
+        # safety clamps
         max_offset = self.max_skew_ticks * book.tick
         bid_price = max(bid_price, mid_price - max_offset)
         ask_price = min(ask_price, mid_price + max_offset)
 
-        # prevent bid above best ask or ask below best bid
+        # prevent crossing
         if np.isfinite(ba) and bid_price >= ba:
             bid_price = ba - book.tick
         if np.isfinite(bb) and bb > 0 and ask_price <= bb:
@@ -303,12 +279,10 @@ class MarketMakerAS(BaseAgent):
             bid_price = mid_price - book.tick
             ask_price = mid_price + book.tick
 
-        # ── step 5: inventory-aware sizing ──
+        # inventory-aware sizing
         base_qty = 20
         if abs(self.inventory) > self.inventory_limit:
-            # skew qty to pull inventory back toward zero
-            # if short (inv < 0): increase bid qty, decrease ask qty
-            # if long  (inv > 0): increase ask qty, decrease bid qty
+            # skew qty toward zero
             ratio = min(abs(self.inventory) / self.inventory_limit, 3.0)
             if self.inventory < 0:
                 bid_qty = int(base_qty * ratio)
@@ -324,7 +298,7 @@ class MarketMakerAS(BaseAgent):
               f"mid={mid_price:.2f}, bid_px={bid_price:.2f}, ask_px={ask_price:.2f}, "
               f"bid_qty={bid_qty}, ask_qty={ask_qty}")
 
-        # ── step 6: ALWAYS post both sides ──
+        # post both sides
         bid = Order(self.new_oid(), self.trader_id, "buy", bid_qty,
                     price=bid_price, ts=t)
         actions.append(bid)
@@ -344,11 +318,7 @@ class MarketMakerAS(BaseAgent):
         return actions if actions else None
 
 class MarketMaker(BaseAgent):
-    """
-    Simple background market maker:
-    - posts one limit order per action around mid
-    - configurable spread range and order size
-    """
+    # simple background MM
 
     def __init__(
         self,
@@ -405,31 +375,31 @@ class InstitutionalTrader(BaseAgent):
         # self.inventory_limit: int = 500
 
     def act(self, t: int, book: OrderBook) -> Action:
-        # 1) If currently executing iceberg, keep working it
+        # continue iceberg
         if self.iceberg is not None:
             return self.iceberg_step(t, book)
 
-        # 2) Decide whether to initiate a parent order
+        # participation check
         if self.rng.random() > self.participation_rate:
             return None
 
         side: Side = "buy" if self.rng.random() < 0.5 else "sell"
         total_qty = int(self.rng.integers(self.total_range[0], self.total_range[1] + 1))
 
-        # If you don't have quotes, just skip
+        # no quotes, skip
         bb, ba = book.best_bid(), book.best_ask()
         if bb <= 0 or not np.isfinite(ba):
             return None
 
         peak = int(self.rng.integers(self.peak_range[0], self.peak_range[1] + 1))
 
-        # price selection (simple)
+        # price selection
         if side == "buy":
             px = bb if self.price_mode == "join" else min(bb + book.tick, ba - book.tick)
         else:
             px = ba if self.price_mode == "join" else max(ba - book.tick, bb + book.tick)
 
-        # 3) Choose iceberg vs one-shot market
+        # iceberg vs market
         if self.rng.random() < self.use_iceberg_prob:
             self.iceberg_start(side=side, total_qty=total_qty, peak=peak, price=px)
             print('--------------------- ICEBERG PLACED --------------------------')
@@ -438,17 +408,7 @@ class InstitutionalTrader(BaseAgent):
             return Order(self.new_oid(), self.trader_id, side, total_qty, price=None, ts=t)
 
     def act_dark(self, t: int, dark_pool) -> Optional[list]:
-        """
-        Submit a dark pool order if the participation check passes.
-
-        Uses the same participation rate and order sizing as act(), but submits
-        to the dark pool instead of the lit book. Returns the list of dark pool
-        trades produced by the submission, or None if the agent chose not to act.
-
-        :param t: current simulation timestep.
-        :param dark_pool: DarkPool instance to submit to.
-        :return: list of Trade objects from dark pool matching, or None.
-        """
+        # dark pool order
 
         if self.dark_fraction <= 0 or self.rng.random() > self.dark_fraction:
             return None
@@ -512,7 +472,7 @@ class InformedTrader(BaseAgent):
         dark_qty = int(total_qty * self.dark_fraction)
         lit_qty = total_qty - dark_qty
 
-        # store dark order info so simulation can route it
+        # dark order for routing
         self.pending_dark_order = (side, dark_qty) if dark_qty > 0 else None
 
         # -------- lit order --------
@@ -528,9 +488,7 @@ class InformedTrader(BaseAgent):
         return Order(self.new_oid(), self.trader_id, side, lit_qty, price=float(px), ts=t)
 
     def act_dark(self, t: int, dark_pool):
-        """
-        Send the stored dark portion of the informed order.
-        """
+        # send dark portion
         if not hasattr(self, "pending_dark_order") or self.pending_dark_order is None:
             return None
 

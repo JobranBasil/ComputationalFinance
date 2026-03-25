@@ -1,11 +1,4 @@
-"""
-plot_calibration.py
-===================
-Heatmap plots for the calibration grid search results.
-
-Run with:
-    python -m src.plot_calibration
-"""
+# python -m src.plot_calibration
 
 from __future__ import annotations
 
@@ -271,7 +264,7 @@ def plot_informed_calibration(
                 ax.text(j, i, fmt, ha="center", va="center",
                         color="white", fontsize=7.5, fontweight="bold")
 
-        # red border on all panels, hatch only on mispricing panel
+        # red border + hatch
         for i in range(len(piv.index)):
             for j in range(len(piv.columns)):
                 if valid_mask.iloc[i, j]:

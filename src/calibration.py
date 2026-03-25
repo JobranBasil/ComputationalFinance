@@ -1,12 +1,4 @@
-"""
-calibration.py
-==============
-Grid search over noise trader parameters (psi, rho_m) to identify
-configurations that produce realistic baseline market quality.
-
-Run with:
-    python -m src.calibration
-"""
+# python -m src.calibration
 
 from __future__ import annotations
 
@@ -44,8 +36,6 @@ DarkPool = _dp_mod.DarkPool
 
 # ---------------------------------------------------------------------------
 # Calibration targets
-# Based on baseline Table 2 in the paper and empirical microstructure norms:
-# spread should be a few ticks (tick=0.01), volatility should be low
 # ---------------------------------------------------------------------------
 
 SPREAD_TARGET = (0.03, 0.05)   # centred on new baseline 0.029
@@ -68,11 +58,7 @@ def _run_one_calibration(
     steps:  int,
     seed:   int,
 ) -> dict:
-    """
-    Single calibration run with noise trader parameters varied.
-    All other parameters fixed at their baseline values.
-    dark_fraction=0, iceberg_prob=0 to match the lambda=0, mu=0 baseline.
-    """
+    # single calibration run
 
     fundamental = FundamentalProcess(
         start=100.075,
@@ -178,10 +164,7 @@ def run_calibration_grid(
     batch_size:   int  = 10,
     silent:       bool = False,
 ) -> pd.DataFrame:
-    """
-    Runs the calibration grid search over (psi, rho_m) pairs.
-    Returns a summary DataFrame with mean and SE per configuration.
-    """
+    # grid search over (psi, rho_m)
 
     if psi_values is None:
         psi_values = PSI_VALUES
@@ -216,7 +199,7 @@ def run_calibration_grid(
     summary      = pd.concat([summary_mean, summary_se], axis=1).reset_index()
     summary["n_seeds"] = n_seeds
 
-    # flag cells within calibration targets
+    # check targets
     summary["spread_valid"]     = summary["mean_spread_mean"].between(*SPREAD_TARGET)
     summary["volatility_valid"] = summary["volatility_mean"].between(*VOLATILITY_TARGET)
     summary["valid"]            = summary["spread_valid"] & summary["volatility_valid"]

@@ -1,7 +1,4 @@
-"""
-To Hide or Not to Hide — Darkpool Simulation
-solara run app.py
-"""
+# solara run app.py
 
 from __future__ import annotations
 import threading, time
@@ -256,7 +253,7 @@ def LS_Float(label, value, min, max, step=0.01):
 
 @solara.component
 def LS_Pct(label, value, min=0.0, max=1.0, step=0.05):
-    """Slider that shows value as percentage."""
+    # shows value as %
     with solara.Row(style={"align-items": "center", "gap": "0", "margin": "1px 0"}):
         solara.SliderFloat(label, value=value, min=min, max=max, step=step)
         solara.Text(f"{value.value:.0%}", style={

@@ -35,15 +35,7 @@ class Trade:
 
 
 class OrderBook:
-    """
-    Continuous double auction with price-time priority.
-
-    - Price levels stored as: price -> deque[Order] (FIFO)
-    - Best bid = max bid price, Best ask = min ask price
-    - add_limit() matches if marketable; remaining qty posts
-    - execute_market() matches until filled or opposite empty
-    - cancel() removes order by id (O(n) search at level)
-    """
+    # price-time priority LOB
 
     def __init__(self, tick: float = 0.01, max_depth_levels: int = 20):
         self.tick = tick
@@ -126,9 +118,7 @@ class OrderBook:
             self.ask_prices = self.ask_prices[:self.max_depth_levels]
 
     def book_imbalance(self):
-        """
-        return orderbook Imbalance [sum(bids) - sum(asks)]
-        """
+        # orderbook imbalance
 
         out: List[Tuple[float, int]] = []
 
@@ -170,9 +160,7 @@ class OrderBook:
         return None
     
     def cancel(self, order_id: int, cancel_qty: Optional[int] = None) -> bool:
-        """
-        Cancel by id. If cancel_qty is None -> cancel full remaining.
-        """
+        # cancel full or partial
         if order_id not in self.order_index:
             return False
 
@@ -198,9 +186,7 @@ class OrderBook:
     # ---------- depth ----------
 
     def top_n_levels(self, side: Side, n: int) -> List[Tuple[float, int]]:
-        """
-        Return [(price, total_qty_at_price), ...] for top n price levels.
-        """
+        # top n price levels
         out: List[Tuple[float, int]] = []
 
         if side == "buy":
@@ -319,9 +305,7 @@ class OrderBook:
         return trades
     
     def cancel(self, order_id: int, cancel_qty: Optional[int] = None) -> bool:
-        """
-        Cancel by id. If cancel_qty is None -> cancel full remaining.
-        """
+        # cancel full or partial
         if order_id not in self.order_index:
             return False
 
