@@ -345,9 +345,7 @@ class MarketMakerAS(BaseAgent):
 
 class MarketMaker(BaseAgent):
     """
-    Simple background market maker:
-    - posts one limit order per action around mid
-    - configurable spread range and order size
+    Simple background liquidity provider
     """
 
     def __init__(
