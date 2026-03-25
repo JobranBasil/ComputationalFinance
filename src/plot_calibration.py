@@ -28,8 +28,9 @@ from .calibration import (
     INFORMED_SIGMA_VALUES,
     MISPRICING_TARGET,
     run_informed_calibration_grid,
-
 )
+
+plt.style.use("seaborn-v0_8-whitegrid")
 
 
 # ---------------------------------------------------------------------------
@@ -37,7 +38,6 @@ from .calibration import (
 # ---------------------------------------------------------------------------
 
 def _pivot(df: pd.DataFrame, value_col: str) -> pd.DataFrame:
-    """Pivot summary df to (psi x rho_m) matrix for heatmap plotting."""
     return df.pivot(index="psi", columns="rho_m", values=value_col)
 
 
@@ -69,39 +69,23 @@ def _border_valid(ax, piv: pd.DataFrame, valid_mask: pd.DataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Main plot
+# Noise trader calibration heatmap
 # ---------------------------------------------------------------------------
 
 def plot_calibration_grid(
     summary_df: pd.DataFrame,
     out_dir: str = ".",
 ) -> None:
-    """
-    2x2 heatmap grid:
-      - Mean Bid-Ask Spread
-      - Price Volatility
-      - Mean Visible Depth
-      - Avg Mispricing
-
-    Cells outside spread/volatility targets are hatched.
-    Cells within BOTH targets get a red border on all panels.
-    """
 
     os.makedirs(out_dir, exist_ok=True)
-
-    # sort so pivot is consistent
     summary_df = summary_df.sort_values(["psi", "rho_m"])
 
-    spread_piv = _pivot(summary_df, "mean_spread_mean")
-    vol_piv    = _pivot(summary_df, "volatility_mean")
-
+    spread_piv   = _pivot(summary_df, "mean_spread_mean")
     spread_valid = (spread_piv >= SPREAD_TARGET[0]) & (spread_piv <= SPREAD_TARGET[1])
-    vol_valid    = (vol_piv    >= VOLATILITY_TARGET[0]) & (vol_piv    <= VOLATILITY_TARGET[1])
-    both_valid   = spread_valid & vol_valid
 
     metrics = {
         "mean_spread_mean":    ("Mean Bid-Ask Spread",            "viridis_r", spread_valid),
-        "volatility_mean":     ("Price Volatility (Log-Ret Std)", "viridis_r", vol_valid),
+        "volatility_mean":     ("Price Volatility (Log-Ret Std)", "viridis_r", None),
         "mean_depth_mean":     ("Mean Visible Depth",             "viridis",   None),
         "avg_mispricing_mean": ("Avg Mispricing |V - M|",         "viridis_r", None),
     }
@@ -120,7 +104,6 @@ def plot_calibration_grid(
         )
         ax.grid(False)
 
-        # axis labels
         ax.set_xticks(range(len(piv.columns)))
         ax.set_xticklabels([f"{v:.1f}" for v in piv.columns], fontsize=9)
         ax.set_yticks(range(len(piv.index)))
@@ -129,7 +112,6 @@ def plot_calibration_grid(
         ax.set_ylabel(r"$\psi$ (sign persistence)", fontsize=11)
         ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
 
-        # annotate each cell
         for i in range(len(piv.index)):
             for j in range(len(piv.columns)):
                 val = piv.values[i, j]
@@ -137,25 +119,20 @@ def plot_calibration_grid(
                 ax.text(j, i, fmt, ha="center", va="center",
                         color="white", fontsize=7.5, fontweight="bold")
 
-        # hatch out-of-target cells on spread and vol panels only
+        # hatch and border only on spread panel
         if col == "mean_spread_mean":
             _hatch_invalid(ax, piv, spread_valid)
-        elif col == "volatility_mean":
-            _hatch_invalid(ax, piv, vol_valid, exclude_mask=both_valid)
-
-        # red border = passes BOTH targets (on all panels)
-        _border_valid(ax, piv, both_valid)
+            _border_valid(ax, piv, spread_valid)
 
         plt.colorbar(im, ax=ax, shrink=0.82, pad=0.02)
 
-    # legend
     valid_patch = mpatches.Patch(
         edgecolor="red", facecolor="none",
-        linewidth=2.5, label="Within both targets (spread \& volatility)"
+        linewidth=2.5, label="Within spread target"
     )
     hatch_patch = mpatches.Patch(
         facecolor="none", hatch="////",
-        edgecolor="grey", label="Outside panel-specific target"
+        edgecolor="grey", label="Outside spread target"
     )
     fig.legend(
         handles=[valid_patch, hatch_patch],
@@ -164,12 +141,9 @@ def plot_calibration_grid(
         bbox_to_anchor=(0.5, 0.0),
     )
 
-    target_str = (
-        f"Spread target: [{SPREAD_TARGET[0]:.3f}, {SPREAD_TARGET[1]:.3f}]  |  "
-        f"Volatility target: [{VOLATILITY_TARGET[0]:.5f}, {VOLATILITY_TARGET[1]:.5f}]"
-    )
     fig.suptitle(
-        r"Calibration Grid Search: $\psi$ vs $\rho_m$" + f"\n{target_str}",
+        r"Calibration Grid Search: $\psi$ vs $\rho_m$"
+        f"\nSpread target: [{SPREAD_TARGET[0]:.3f}, {SPREAD_TARGET[1]:.3f}]",
         fontsize=13, y=1.01, fontweight="bold",
     )
 
@@ -180,14 +154,14 @@ def plot_calibration_grid(
     print(f"Heatmap saved to {out_path}")
 
 
+# ---------------------------------------------------------------------------
+# Noise trader calibration lineplots
+# ---------------------------------------------------------------------------
+
 def plot_calibration_lineplots(
     summary_df: pd.DataFrame,
     out_dir: str = ".",
 ) -> None:
-    """
-    Line plots matching the style of plot_sensitivity() in analysis.py:
-    x-axis = rho_m, lines coloured by psi, one panel per metric.
-    """
 
     os.makedirs(out_dir, exist_ok=True)
     import matplotlib.cm as cm
@@ -195,17 +169,17 @@ def plot_calibration_lineplots(
     psi_values = sorted(summary_df["psi"].unique())
     colours    = cm.tab10(np.linspace(0, 0.6, len(psi_values)))
 
+    # spread only — volatility shown without target band
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     metrics = {
         "mean_spread_mean": "Mean Bid-Ask Spread",
         "volatility_mean":  "Price Volatility (Log-Ret Std)",
     }
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
-    for ax, (col, title) in zip(axes.flat, metrics.items()):
+    for ax, (col, title) in zip(axes, metrics.items()):
         for psi, colour in zip(psi_values, colours):
-            sub = summary_df[summary_df["psi"] == psi].sort_values("rho_m")
+            sub    = summary_df[summary_df["psi"] == psi].sort_values("rho_m")
             se_col = col.replace("_mean", "_se")
             ax.plot(
                 sub["rho_m"], sub[col],
@@ -220,12 +194,9 @@ def plot_calibration_lineplots(
                     alpha=0.15, color=colour,
                 )
 
-        # shade calibration target band on spread and vol panels
+        # only shade spread panel
         if col == "mean_spread_mean":
             ax.axhspan(*SPREAD_TARGET, alpha=0.10, color="green",
-                       label="Calibration target")
-        elif col == "volatility_mean":
-            ax.axhspan(*VOLATILITY_TARGET, alpha=0.10, color="green",
                        label="Calibration target")
 
         ax.set_xlabel(r"$\rho_m$ (market order probability)", fontsize=10)
@@ -244,6 +215,11 @@ def plot_calibration_lineplots(
     plt.close(fig)
     print(f"Line plots saved to {out_path}")
 
+
+# ---------------------------------------------------------------------------
+# Informed trader calibration heatmap + lineplot
+# ---------------------------------------------------------------------------
+
 def plot_informed_calibration(
     summary_df: pd.DataFrame,
     out_dir: str = ".",
@@ -254,23 +230,22 @@ def plot_informed_calibration(
 
     summary_df = summary_df.sort_values(["rho", "sigma_s"])
 
-    def _pivot(col):
+    def _pivot_inf(col):
         return summary_df.pivot(index="rho", columns="sigma_s", values=col)
 
-    mispricing_piv = _pivot("avg_mispricing_mean")
-    valid_mask     = (_pivot("mispricing_valid")).astype(bool)
+    valid_mask = (_pivot_inf("mispricing_valid")).astype(bool)
 
     metrics = {
-        "avg_mispricing_mean": ("Avg Mispricing |V - M|",      "viridis_r"),
-        "mean_spread_mean":    ("Mean Bid-Ask Spread",          "viridis_r"),
+        "avg_mispricing_mean": ("Avg Mispricing |V - M|",        "viridis_r"),
+        "mean_spread_mean":    ("Mean Bid-Ask Spread",            "viridis_r"),
         "volatility_mean":     ("Price Volatility (Log-Ret Std)", "viridis_r"),
-        "mean_depth_mean":     ("Mean Visible Depth",           "viridis"),
+        "mean_depth_mean":     ("Mean Visible Depth",             "viridis"),
     }
 
     fig, axes = plt.subplots(2, 2, figsize=(13, 10))
 
     for ax, (col, (title, cmap)) in zip(axes.flat, metrics.items()):
-        piv = _pivot(col)
+        piv = _pivot_inf(col)
 
         im = ax.imshow(
             piv.values,
@@ -296,7 +271,7 @@ def plot_informed_calibration(
                 ax.text(j, i, fmt, ha="center", va="center",
                         color="white", fontsize=7.5, fontweight="bold")
 
-        # red border on mispricing-valid cells
+        # red border on all panels, hatch only on mispricing panel
         for i in range(len(piv.index)):
             for j in range(len(piv.columns)):
                 if valid_mask.iloc[i, j]:
@@ -306,7 +281,6 @@ def plot_informed_calibration(
                         linewidth=2.5, zorder=5,
                     ))
 
-        # hatch invalid cells on mispricing panel only
         if col == "avg_mispricing_mean":
             for i in range(len(piv.index)):
                 for j in range(len(piv.columns)):
@@ -334,9 +308,9 @@ def plot_informed_calibration(
         bbox_to_anchor=(0.5, 0.0),
     )
 
-    target_str = f"Mispricing target: [{MISPRICING_TARGET[0]:.3f}, {MISPRICING_TARGET[1]:.3f}]"
     fig.suptitle(
-        r"Informed Trader Calibration: $\rho$ vs $\sigma_s$" + f"\n{target_str}",
+        r"Informed Trader Calibration: $\rho$ vs $\sigma_s$"
+        f"\nMispricing target: [{MISPRICING_TARGET[0]:.3f}, {MISPRICING_TARGET[1]:.3f}]",
         fontsize=13, y=1.01, fontweight="bold",
     )
 
@@ -346,8 +320,7 @@ def plot_informed_calibration(
     plt.close(fig)
     print(f"Informed calibration heatmap saved to {out_path}")
 
-
-        # --- line plots ---
+    # --- line plot ---
     fig, ax = plt.subplots(1, 1, figsize=(7, 5))
 
     sigma_values = sorted(summary_df["sigma_s"].unique())
@@ -386,6 +359,8 @@ def plot_informed_calibration(
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
     print(f"Informed calibration line plots saved to {out_path}")
+
+
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
@@ -397,7 +372,6 @@ if __name__ == "__main__":
     out_dir = os.path.join(os.path.dirname(__file__), "calibration_plots")
     os.makedirs(out_dir, exist_ok=True)
 
-    # run or load
     csv_path = os.path.join(out_dir, "calibration_summary.csv")
     if os.path.exists(csv_path):
         print(f"Loading existing results from {csv_path}")
@@ -418,7 +392,6 @@ if __name__ == "__main__":
 
     print("\nDone. Outputs in:", out_dir)
 
-    # informed trader calibration
     informed_csv = os.path.join(out_dir, "informed_calibration_summary.csv")
     if os.path.exists(informed_csv):
         print(f"Loading existing informed calibration from {informed_csv}")

@@ -48,8 +48,8 @@ DarkPool = _dp_mod.DarkPool
 # spread should be a few ticks (tick=0.01), volatility should be low
 # ---------------------------------------------------------------------------
 
-SPREAD_TARGET     = (0.03, 0.07)    # a few ticks either side of baseline 0.046
-VOLATILITY_TARGET = (0.00030, 0.00075)   # log-return std, matches baseline 0.04%
+SPREAD_TARGET = (0.03, 0.05)   # centred on new baseline 0.029
+VOLATILITY_TARGET = (0.00010, 0.00030)  # centred on new baseline 0.00019
 
 PSI_VALUES   = [0.5, 0.6, 0.7, 0.8, 0.9]    # sign persistence
 RHO_M_VALUES = [0.2, 0.3, 0.4, 0.5, 0.6]    # market order probability
