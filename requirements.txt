@@ -1,0 +1,5 @@
+mesa>=3.0
+solara>=1.30
+numpy
+matplotlib
+networkx
