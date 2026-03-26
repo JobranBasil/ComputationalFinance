@@ -36,9 +36,9 @@ DarkPool = _dp_mod.DarkPool
 plt.style.use("seaborn-v0_8-whitegrid")
 
 
-# ---------------------------------------------------------------------------
+
 # Single seeded run
-# ---------------------------------------------------------------------------
+
 
 def _build_and_run(seed: int, steps: int = 1000) -> dict:
     # single seeded run
@@ -116,9 +116,9 @@ def _build_and_run(seed: int, steps: int = 1000) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
+
 # Multiple baseline runs
-# ---------------------------------------------------------------------------
+
 
 def run_baseline(
     n_runs:     int  = 20,
@@ -190,9 +190,9 @@ def plot_baseline(results_df: pd.DataFrame, out_dir: str = ".") -> None:
     print(f"Baseline plots and summary saved to {out_dir}/")
 
 
-# ---------------------------------------------------------------------------
+
 # Validation: informed trader participation rate vs mispricing
-# ---------------------------------------------------------------------------
+
 
 def _build_and_run_informed_rate(seed: int, participation_rate: float,
                                   steps: int = 1000) -> dict:
@@ -353,9 +353,9 @@ def plot_validation_informed_rate(
         print(f"  rho={rate:.1f}  mean_mispricing={mean:.4f}  SE={se:.4f}")
 
 
-# ---------------------------------------------------------------------------
+
 # Sensitivity analysis
-# ---------------------------------------------------------------------------
+
 
 def _run_one_sensitivity(
     dark_frac:    float,
@@ -553,9 +553,9 @@ def plot_sensitivity(results_df: pd.DataFrame, out_dir: str = ".") -> None:
     print(f"Sensitivity plots and results (with SE) saved to {out_dir}/")
 
 
-# ---------------------------------------------------------------------------
+
 # Entrypoint
-# ---------------------------------------------------------------------------
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.WARNING)

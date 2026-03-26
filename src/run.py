@@ -22,9 +22,9 @@ DarkPool = _dp_mod.DarkPool
 DarkOrder = _dp_mod.Order
 
 
-# ---------------------------------------------------------------------------
+
 # Order book helpers
-# ---------------------------------------------------------------------------
+
 
 def apply_action(book: OrderBook, action: Action | list) -> list:
     # apply action to book
@@ -75,9 +75,9 @@ def seed_initial_book(
         ))
 
 
-# ---------------------------------------------------------------------------
+
 # Analytics
-# ---------------------------------------------------------------------------
+
 
 def best_level_depth(book: OrderBook) -> tuple[int, int]:
     bb, ba = book.best_bid(), book.best_ask()
@@ -147,9 +147,9 @@ def add_market_analytics(book_df: pd.DataFrame, vol_window: int = 10) -> pd.Data
     return df
 
 
-# ---------------------------------------------------------------------------
+
 # Plotting
-# ---------------------------------------------------------------------------
+
 
 def plot_series(series: pd.Series, title: str, out_path: str) -> None:
     fig, ax = plt.subplots(figsize=(12, 4))
@@ -305,9 +305,9 @@ def plot_mid_vs_fundamental(
     plt.close(fig)
 
 
-# ---------------------------------------------------------------------------
+
 # Simulation
-# ---------------------------------------------------------------------------
+
 
 def run_simulation(
     book: OrderBook,

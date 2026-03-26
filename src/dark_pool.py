@@ -47,6 +47,11 @@ class DarkPool:
         self.cancelled_ids: Set[int] = set()
 
     def compute_mid_price(self):
+        """
+        Function to compute the mid price for order matching based on the limit order book best ask and best bid prices
+        """
+        
+        
         if not self.lit_orderbook.bids or not self.lit_orderbook.asks:
             logging.warning("-----WARNING-----: No orders in lit orderbook")
             return np.nan
@@ -73,6 +78,11 @@ class DarkPool:
         return (best_bid + best_ask) / 2
 
     def match_orders(self, mid_price: float, timestamp: int) -> list[Any] | None:
+        """
+        Function to match dark pool orders from institutional and informed traders at the lit order book mid price.
+        """
+        
+        
         trades: List[Trade] = []
 
         while self.bids and self.asks:
@@ -136,7 +146,11 @@ class DarkPool:
         return trades
 
     def submit_order(self, order: Order) -> list[Trade] | None:
+        """
+        Function to submit an order to the dark pool
+        """
 
+        
         if order.qty <= 0:
             logging.warning(f"-----WARNING: INVALID ORDER QUANTITY-----: Order qty <= 0: order_id: {order.order_id}, qty: {order.qty}")
             return []
@@ -172,6 +186,11 @@ class DarkPool:
         return self.match_orders(mid_price, order.ts)
 
     def tick(self, t: int):
+        """
+        Function to advance the dark pool state by one tick, processing pending routes to the lit book, expiring stale orders, and matching orders at the mid price.
+        """
+       
+       
         self._process_pending_routes(t)
         self._expire_stale_orders(t)
 
@@ -184,6 +203,11 @@ class DarkPool:
         logging.info(f"-----DARK POOL TICK-----: t={t}, active_orders={len(self.order_index)}, pending_routes={len(self.pending_lit_routes)}")
 
     def cancel_order(self, order_id: int) -> bool:
+        """
+        Function to cancel an order from the dark pool
+        """
+        
+        
         if order_id not in self.order_index:
             logging.warning(f"-----WARNING: ORDER NOT FOUND-----: Order not found in order index: order_id: {order_id}")
             return False
@@ -215,6 +239,11 @@ class DarkPool:
         return bid_qty, ask_qty
 
     def recent_volume(self, current_ts: int, lookback: int) -> int:
+        """
+        Function to compute the recent trading volume in the dark pool over a specified lookback period, accounting for tape delay.
+        """
+        
+        
         lookback_start = current_ts - self.tape_delay
         window_start = lookback_start - lookback
 
@@ -237,6 +266,11 @@ class DarkPool:
         )
 
     def _process_pending_routes(self, current_ts: int):
+        """
+        Function to process pending routes to the lit book that are scheduled for execution at the current timestamp, executing them and logging the results.
+        """
+        
+        
         pending_orders = [
             (ts,order) for ts, order in self.pending_lit_routes if current_ts >= ts
         ]
@@ -258,6 +292,11 @@ class DarkPool:
                 )
 
     def _expire_stale_orders(self, current_ts: int) -> List[LitOrder]:
+        """
+        Function to expire stale orders from the dark pool that have been resting.
+        """
+        
+        
         routed_orders: List[LitOrder] = []
 
         for queue in (self.bids, self.asks):

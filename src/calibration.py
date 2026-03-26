@@ -34,9 +34,9 @@ _dp_mod = importlib.import_module("src.dark_pool")
 DarkPool = _dp_mod.DarkPool
 
 
-# ---------------------------------------------------------------------------
+
 # Calibration targets
-# ---------------------------------------------------------------------------
+
 
 SPREAD_TARGET = (0.03, 0.05)   # centred on new baseline 0.029
 VOLATILITY_TARGET = (0.00010, 0.00030)  # centred on new baseline 0.00019
@@ -48,9 +48,9 @@ N_SEEDS  = 10
 T_STEPS  = 1000
 
 
-# ---------------------------------------------------------------------------
+
 # Single run
-# ---------------------------------------------------------------------------
+
 
 def _run_one_calibration(
     psi:    float,
@@ -151,9 +151,9 @@ def _run_one_calibration(
     }
 
 
-# ---------------------------------------------------------------------------
+
 # Grid search
-# ---------------------------------------------------------------------------
+
 
 def run_calibration_grid(
     psi_values:   list | None = None,
@@ -206,18 +206,18 @@ def run_calibration_grid(
 
     return summary
 
-# ---------------------------------------------------------------------------
+
 # Informed trader calibration targets
-# ---------------------------------------------------------------------------
+
 
 INFORMED_RHO_VALUES    = [0.2, 0.3, 0.4, 0.5, 0.6]
 INFORMED_SIGMA_VALUES  = [0.04, 0.06, 0.08, 0.10, 0.12]
 MISPRICING_TARGET      = (0.10, 0.25)  # band around baseline 0.172
 
 
-# ---------------------------------------------------------------------------
+
 # Single run
-# ---------------------------------------------------------------------------
+
 
 def _run_one_informed_calibration(
     rho:    float,
@@ -317,9 +317,9 @@ def _run_one_informed_calibration(
     }
 
 
-# ---------------------------------------------------------------------------
+
 # Grid search
-# ---------------------------------------------------------------------------
+
 
 def run_informed_calibration_grid(
     rho_values:    list | None = None,
@@ -369,9 +369,9 @@ def run_informed_calibration_grid(
     return summary
 
 
-# ---------------------------------------------------------------------------
+
 # Entrypoint
-# ---------------------------------------------------------------------------
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.WARNING)
