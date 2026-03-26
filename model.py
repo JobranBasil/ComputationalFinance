@@ -1,13 +1,4 @@
-"""
-Mesa Model wrapping the ABM order-book simulation.
-
-Each simulation tick:
-  1. Advance the fundamental price
-  2. Every agent acts on the lit order book
-  3. Institutional / Informed agents also act on the dark pool
-  4. Dark pool tick (expiry + routing)
-  5. Collect metrics for Solara dashboard
-"""
+# mesa model for ABM orderbook sim
 
 from __future__ import annotations
 
@@ -93,7 +84,7 @@ def microprice(book):
 # ── Mesa wrapper agents ───────────────────────────────────────────────
 
 class MesaAgentWrapper(mesa.Agent):
-    """Thin Mesa wrapper so agents appear in the Mesa scheduler."""
+    # mesa wrapper
 
     def __init__(self, model, inner_agent):
         super().__init__(model)
@@ -107,13 +98,7 @@ class MesaAgentWrapper(mesa.Agent):
 # ── Mesa Model ────────────────────────────────────────────────────────
 
 class MarketModel(mesa.Model):
-    """
-    Parameters exposed as Solara sliders:
-      steps, sigma_v, start_price,
-      noise_count, noise_participation, noise_market_prob,
-      mmas_gamma, mmas_kappa, mmas_sigma, mmas_horizon,
-      informed_participation, informed_sigma_s, dark_fraction
-    """
+    # params exposed as solara sliders
 
     def __init__(
         self,
@@ -140,7 +125,7 @@ class MarketModel(mesa.Model):
         super().__init__()
         self.num_steps = steps
 
-        # ── derive all sub-seeds from the master seed ──
+        # derive sub-seeds
         max_agents = noise_count + institutional_count + informed_count + 10
         ss = np.random.SeedSequence(seed)
         child_seeds = ss.spawn(max_agents + 10)
@@ -176,7 +161,7 @@ class MarketModel(mesa.Model):
             tape_delay=5,
         )
 
-        # ── create inner (original) agents ──
+        # create agents
         self._inner_agents = []
 
         for i in range(noise_count):
@@ -216,7 +201,7 @@ class MarketModel(mesa.Model):
                 dark_fraction=dark_fraction,
             )
             self._inner_agents.append(inf)
-        # keep a reference to the first one (for backward compat)
+        # keep ref to first informed
         self.informed = next(
             (a for a in self._inner_agents if isinstance(a, InformedTrader)), None
         )
@@ -232,19 +217,18 @@ class MarketModel(mesa.Model):
                 )
             )
 
-        # register Mesa wrappers (needed for mesa internals)
-        # and initialize last-valid-mid to actual starting mid
+        # register mesa wrappers
         initial_mid = (start_price + 0.05 + start_price + 0.10) / 2
         for ia in self._inner_agents:
             ia._last_valid_mid = initial_mid
             MesaAgentWrapper(self, ia)
 
-        # ── time-series storage ──
+        # time-series storage
         self.history: list[dict] = []
         self.snapshots: list[dict] = []
         self.latest_snapshot: dict | None = None
         self._t = 0
-        self._last_mid = initial_mid      # model-level tracker for gapless charts
+        self._last_mid = initial_mid      # gapless chart tracker
         self._last_spread = 0.05
 
     # ────────────────────────────────────────────────────────────────────
@@ -307,7 +291,7 @@ class MarketModel(mesa.Model):
 
         vol = sum(tr.qty for tr in trades_this_step if hasattr(tr, "qty"))
 
-        # gapless tracking: always use last valid value
+        # use last valid value
         if np.isfinite(mid):
             self._last_mid = mid
         else:
@@ -341,14 +325,14 @@ class MarketModel(mesa.Model):
             "num_ask_levels": len(self.book.ask_prices),
         })
 
-        # always keep latest snapshot for live orderbook view
+        # latest snapshot for live view
         self.latest_snapshot = {
             "t": t,
             "bids": self.book.top_n_levels("buy", 10),
             "asks": self.book.top_n_levels("sell", 10),
         }
 
-        # periodic snapshots for history scrubbing
+        # periodic snapshots
         snap_interval = max(1, self.num_steps // 20)
         if t % snap_interval == 0 or t == self.num_steps - 1:
             self.snapshots.append({
@@ -360,6 +344,6 @@ class MarketModel(mesa.Model):
         self._t += 1
 
     def run_all(self):
-        """Run the full simulation."""
+        # run full sim
         for _ in range(self.num_steps):
             self.step()

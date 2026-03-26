@@ -1,11 +1,4 @@
-"""
-plot_calibration.py
-===================
-Heatmap plots for the calibration grid search results.
-
-Run with:
-    python -m src.plot_calibration
-"""
+# python -m src.plot_calibration
 
 from __future__ import annotations
 
@@ -33,9 +26,9 @@ from .calibration import (
 plt.style.use("seaborn-v0_8-whitegrid")
 
 
-# ---------------------------------------------------------------------------
+
 # Helpers
-# ---------------------------------------------------------------------------
+
 
 def _pivot(df: pd.DataFrame, value_col: str) -> pd.DataFrame:
     return df.pivot(index="psi", columns="rho_m", values=value_col)
@@ -68,9 +61,9 @@ def _border_valid(ax, piv: pd.DataFrame, valid_mask: pd.DataFrame) -> None:
                 ))
 
 
-# ---------------------------------------------------------------------------
+
 # Noise trader calibration heatmap
-# ---------------------------------------------------------------------------
+
 
 def plot_calibration_grid(
     summary_df: pd.DataFrame,
@@ -154,9 +147,9 @@ def plot_calibration_grid(
     print(f"Heatmap saved to {out_path}")
 
 
-# ---------------------------------------------------------------------------
+
 # Noise trader calibration lineplots
-# ---------------------------------------------------------------------------
+
 
 def plot_calibration_lineplots(
     summary_df: pd.DataFrame,
@@ -216,9 +209,9 @@ def plot_calibration_lineplots(
     print(f"Line plots saved to {out_path}")
 
 
-# ---------------------------------------------------------------------------
+
 # Informed trader calibration heatmap + lineplot
-# ---------------------------------------------------------------------------
+
 
 def plot_informed_calibration(
     summary_df: pd.DataFrame,
@@ -271,7 +264,7 @@ def plot_informed_calibration(
                 ax.text(j, i, fmt, ha="center", va="center",
                         color="white", fontsize=7.5, fontweight="bold")
 
-        # red border on all panels, hatch only on mispricing panel
+        # red border + hatch
         for i in range(len(piv.index)):
             for j in range(len(piv.columns)):
                 if valid_mask.iloc[i, j]:
@@ -361,9 +354,9 @@ def plot_informed_calibration(
     print(f"Informed calibration line plots saved to {out_path}")
 
 
-# ---------------------------------------------------------------------------
+
 # Entrypoint
-# ---------------------------------------------------------------------------
+
 
 if __name__ == "__main__":
     import logging

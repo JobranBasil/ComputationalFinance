@@ -1,12 +1,4 @@
-"""
-calibration.py
-==============
-Grid search over noise trader parameters (psi, rho_m) to identify
-configurations that produce realistic baseline market quality.
-
-Run with:
-    python -m src.calibration
-"""
+# python -m src.calibration
 
 from __future__ import annotations
 
@@ -42,11 +34,9 @@ _dp_mod = importlib.import_module("src.dark_pool")
 DarkPool = _dp_mod.DarkPool
 
 
-# ---------------------------------------------------------------------------
+
 # Calibration targets
-# Based on baseline Table 2 in the paper and empirical microstructure norms:
-# spread should be a few ticks (tick=0.01), volatility should be low
-# ---------------------------------------------------------------------------
+
 
 SPREAD_TARGET = (0.03, 0.05)   # centred on new baseline 0.029
 VOLATILITY_TARGET = (0.00010, 0.00030)  # centred on new baseline 0.00019
@@ -58,9 +48,9 @@ N_SEEDS  = 10
 T_STEPS  = 1000
 
 
-# ---------------------------------------------------------------------------
+
 # Single run
-# ---------------------------------------------------------------------------
+
 
 def _run_one_calibration(
     psi:    float,
@@ -68,11 +58,7 @@ def _run_one_calibration(
     steps:  int,
     seed:   int,
 ) -> dict:
-    """
-    Single calibration run with noise trader parameters varied.
-    All other parameters fixed at their baseline values.
-    dark_fraction=0, iceberg_prob=0 to match the lambda=0, mu=0 baseline.
-    """
+    # single calibration run
 
     fundamental = FundamentalProcess(
         start=100.075,
@@ -165,9 +151,9 @@ def _run_one_calibration(
     }
 
 
-# ---------------------------------------------------------------------------
+
 # Grid search
-# ---------------------------------------------------------------------------
+
 
 def run_calibration_grid(
     psi_values:   list | None = None,
@@ -178,10 +164,7 @@ def run_calibration_grid(
     batch_size:   int  = 10,
     silent:       bool = False,
 ) -> pd.DataFrame:
-    """
-    Runs the calibration grid search over (psi, rho_m) pairs.
-    Returns a summary DataFrame with mean and SE per configuration.
-    """
+    # grid search over (psi, rho_m)
 
     if psi_values is None:
         psi_values = PSI_VALUES
@@ -216,25 +199,25 @@ def run_calibration_grid(
     summary      = pd.concat([summary_mean, summary_se], axis=1).reset_index()
     summary["n_seeds"] = n_seeds
 
-    # flag cells within calibration targets
+    # check targets
     summary["spread_valid"]     = summary["mean_spread_mean"].between(*SPREAD_TARGET)
     summary["volatility_valid"] = summary["volatility_mean"].between(*VOLATILITY_TARGET)
     summary["valid"]            = summary["spread_valid"] & summary["volatility_valid"]
 
     return summary
 
-# ---------------------------------------------------------------------------
+
 # Informed trader calibration targets
-# ---------------------------------------------------------------------------
+
 
 INFORMED_RHO_VALUES    = [0.2, 0.3, 0.4, 0.5, 0.6]
 INFORMED_SIGMA_VALUES  = [0.04, 0.06, 0.08, 0.10, 0.12]
 MISPRICING_TARGET      = (0.10, 0.25)  # band around baseline 0.172
 
 
-# ---------------------------------------------------------------------------
+
 # Single run
-# ---------------------------------------------------------------------------
+
 
 def _run_one_informed_calibration(
     rho:    float,
@@ -334,9 +317,9 @@ def _run_one_informed_calibration(
     }
 
 
-# ---------------------------------------------------------------------------
+
 # Grid search
-# ---------------------------------------------------------------------------
+
 
 def run_informed_calibration_grid(
     rho_values:    list | None = None,
@@ -386,9 +369,9 @@ def run_informed_calibration_grid(
     return summary
 
 
-# ---------------------------------------------------------------------------
+
 # Entrypoint
-# ---------------------------------------------------------------------------
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.WARNING)

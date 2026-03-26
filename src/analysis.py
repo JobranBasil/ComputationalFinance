@@ -1,13 +1,4 @@
-"""
-analysis.py
-===========
-Runs the baseline simulation multiple times and performs sensitivity analysis,
-built on top of run.py.
-
-Usage
------
-    python -m src.analysis
-"""
+# python -m src.analysis
 
 from __future__ import annotations
 
@@ -45,15 +36,12 @@ DarkPool = _dp_mod.DarkPool
 plt.style.use("seaborn-v0_8-whitegrid")
 
 
-# ---------------------------------------------------------------------------
+
 # Single seeded run
-# ---------------------------------------------------------------------------
+
 
 def _build_and_run(seed: int, steps: int = 1000) -> dict:
-    """
-    Instantiate all components with the given seed, run the simulation,
-    and return a dict of scalar market quality metrics for that run.
-    """
+    # single seeded run
 
     fundamental = FundamentalProcess(
         start=100.075,
@@ -128,9 +116,9 @@ def _build_and_run(seed: int, steps: int = 1000) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
+
 # Multiple baseline runs
-# ---------------------------------------------------------------------------
+
 
 def run_baseline(
     n_runs:     int  = 20,
@@ -158,10 +146,7 @@ def run_baseline(
 
 
 def plot_baseline(results_df: pd.DataFrame, out_dir: str = ".") -> None:
-    """
-    2x2 box-and-whisker plots for the four market quality metrics.
-    Mean and standard error annotated on each panel.
-    """
+    # 2x2 boxplots
 
     os.makedirs(out_dir, exist_ok=True)
 
@@ -205,16 +190,13 @@ def plot_baseline(results_df: pd.DataFrame, out_dir: str = ".") -> None:
     print(f"Baseline plots and summary saved to {out_dir}/")
 
 
-# ---------------------------------------------------------------------------
+
 # Validation: informed trader participation rate vs mispricing
-# ---------------------------------------------------------------------------
+
 
 def _build_and_run_informed_rate(seed: int, participation_rate: float,
                                   steps: int = 1000) -> dict:
-    """
-    Same model as _build_and_run but with a configurable informed trader
-    participation rate. Returns avg_mispricing for the given seed and rate.
-    """
+    # same model, configurable informed rate
 
     fundamental = FundamentalProcess(
         start=100.075,
@@ -288,23 +270,7 @@ def run_validation_informed_rate(
     batch_size:          int  = 5,
     silent:              bool = False,
 ) -> pd.DataFrame:
-    """
-    Monte Carlo validation: run the model at two informed trader participation
-    rates (baseline 0.4 and high 1.0) for n_runs each and compare avg mispricing.
-
-    Parameters
-    ----------
-    participation_rates : list of rates to test, default [0.4, 1.0]
-    n_runs              : Monte Carlo runs per rate
-    steps               : simulation timesteps per run
-    base_seed           : base random seed
-    batch_size          : parallel batch size
-    silent              : suppress progress output
-
-    Returns
-    -------
-    pd.DataFrame with one row per (seed, participation_rate).
-    """
+    # MC validation: informed rate vs mispricing
 
     if participation_rates is None:
         participation_rates = [0.4, 1.0]
@@ -334,11 +300,7 @@ def plot_validation_informed_rate(
     results_df: pd.DataFrame,
     out_dir:    str = ".",
 ) -> None:
-    """
-    Side-by-side boxplots of avg_mispricing for each participation rate,
-    with mean annotated. Validates that higher informed participation
-    reduces mispricing (Kyle 1985).
-    """
+    # boxplots per participation rate
 
     os.makedirs(out_dir, exist_ok=True)
 
@@ -391,9 +353,9 @@ def plot_validation_informed_rate(
         print(f"  rho={rate:.1f}  mean_mispricing={mean:.4f}  SE={se:.4f}")
 
 
-# ---------------------------------------------------------------------------
+
 # Sensitivity analysis
-# ---------------------------------------------------------------------------
+
 
 def _run_one_sensitivity(
     dark_frac:    float,
@@ -401,7 +363,7 @@ def _run_one_sensitivity(
     steps:        int,
     seed:         int,
 ) -> dict:
-    """Single sensitivity run with dark_fraction and use_iceberg_prob varied."""
+    # single sensitivity run
 
     fundamental = FundamentalProcess(
         start=100.075,
@@ -491,15 +453,7 @@ def run_sensitivity(
     batch_size:          int  = 10,
     silent:              bool = False,
 ) -> pd.DataFrame:
-    """
-    Grid search over dark_frac x iceberg_prob. Runs are dispatched in
-    batches across all CPU cores. Mean and SE saved to CSV.
-
-    Returns
-    -------
-    pd.DataFrame with mean columns per metric, one row per config.
-    SE columns are included for CSV export only.
-    """
+    # grid search: dark_frac x iceberg_prob
 
     if dark_frac_values is None:
         dark_frac_values = np.arange(0, 1.01, 0.2).tolist()
@@ -530,7 +484,7 @@ def run_sensitivity(
     results_df  = pd.DataFrame(all_results)
     grouped     = results_df.groupby(["dark_frac", "iceberg_prob"])
 
-    # mean and SE computed — SE goes to CSV, mean used for plots
+    # mean and SE
     summary_mean = grouped[metric_cols].mean().add_suffix("_mean")
     summary_se   = grouped[metric_cols].sem().add_suffix("_se")
     summary      = pd.concat([summary_mean, summary_se], axis=1).reset_index()
@@ -540,12 +494,7 @@ def run_sensitivity(
 
 
 def plot_sensitivity(results_df: pd.DataFrame, out_dir: str = ".") -> None:
-    """
-    One clean line plot per metric, lines coloured by iceberg_prob mu.
-    No shaded bands. SE is preserved in the CSV only.
-    x-axis = dark_frac (lambda), legend labels use mu notation.
-    Also saves a combined 2x2 summary figure.
-    """
+    # line plot per metric
 
     os.makedirs(out_dir, exist_ok=True)
 
@@ -599,14 +548,14 @@ def plot_sensitivity(results_df: pd.DataFrame, out_dir: str = ".") -> None:
     fig.savefig(os.path.join(out_dir, "sensitivity_summary.png"), dpi=150)
     plt.close(fig)
 
-    # save full results including SE columns to CSV
+    # save results with SE
     results_df.to_csv(os.path.join(out_dir, "sensitivity_results.csv"), index=False)
     print(f"Sensitivity plots and results (with SE) saved to {out_dir}/")
 
 
-# ---------------------------------------------------------------------------
+
 # Entrypoint
-# ---------------------------------------------------------------------------
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.WARNING)

@@ -12,9 +12,9 @@ matplotlib.use("agg")
 import matplotlib.pyplot as plt
 from model import MarketModel
 
-# ======================================================================
+
 #  PALETTE — Robinhood white
-# ======================================================================
+
 WHITE    = "#ffffff"
 BG       = "#f5f6f8"
 SIDEBAR  = "#ffffff"
@@ -123,9 +123,9 @@ a[href*="solara.dev"], .v-toolbar__content a {{
 """
 
 
-# ======================================================================
+
 #  HELPERS
-# ======================================================================
+
 
 def _s(vals):
     return np.array([v if v is not None else np.nan for v in vals], dtype=float)
@@ -150,9 +150,9 @@ def _rolling_vol(mids, window=20):
     return vol
 
 
-# ======================================================================
+
 #  STATE
-# ======================================================================
+
 steps                  = solara.reactive(500)
 sigma_v                = solara.reactive(0.02)
 start_price            = solara.reactive(100.0)
@@ -227,9 +227,9 @@ def stop_sim():
     _stop.set()
 
 
-# ======================================================================
+
 #  LABELED SLIDERS
-# ======================================================================
+
 
 @solara.component
 def LS_Int(label, value, min, max, step=1):
@@ -265,9 +265,9 @@ def LS_Pct(label, value, min=0.0, max=1.0, step=0.05):
         })
 
 
-# ======================================================================
+
 #  CHART CARD STYLE
-# ======================================================================
+
 
 CARD_STYLE = {
     "background": CARD,
@@ -280,9 +280,9 @@ CARD_STYLE = {
 }
 
 
-# ======================================================================
+
 #  CHARTS
-# ======================================================================
+
 FW = 6.0
 FH = 2.4
 
@@ -379,9 +379,7 @@ def ChartDark(history):
     _fin(fig, ax); solara.FigureMatplotlib(fig); plt.close(fig)
 
 
-# ======================================================================
 #  PILL
-# ======================================================================
 
 @solara.component
 def Pill(label, value, color=GREEN):
@@ -399,9 +397,9 @@ def Pill(label, value, color=GREEN):
         })
 
 
-# ======================================================================
+
 #  PAGE
-# ======================================================================
+
 
 @solara.component
 def Page():

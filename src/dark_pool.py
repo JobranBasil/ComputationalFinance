@@ -11,9 +11,7 @@ Side = Literal['buy', 'sell']
 
 @dataclass
 class Order:
-    """
-    Represents an order in the dark pool.
-    """
+    # dark pool order
 
     order_id: int
     trader_id: int
@@ -23,9 +21,7 @@ class Order:
 
 @dataclass
 class Trade:
-    """
-    Represents a trade in the dark pool.
-    """
+    # dark pool trade
 
     price: float
     qty: int
@@ -33,9 +29,6 @@ class Trade:
 
 
 class DarkPool:
-    """
-    Represents a dark pool for trading.
-    """
 
     def __init__(self, lit_orderbook, max_resting_ticks: int = 10, routing_delay: int = 10, tape_delay: int = 5):
         self.lit_orderbook = lit_orderbook
@@ -54,6 +47,11 @@ class DarkPool:
         self.cancelled_ids: Set[int] = set()
 
     def compute_mid_price(self):
+        """
+        Function to compute the mid price for order matching based on the limit order book best ask and best bid prices
+        """
+        
+        
         if not self.lit_orderbook.bids or not self.lit_orderbook.asks:
             logging.warning("-----WARNING-----: No orders in lit orderbook")
             return np.nan
@@ -80,26 +78,28 @@ class DarkPool:
         return (best_bid + best_ask) / 2
 
     def match_orders(self, mid_price: float, timestamp: int) -> list[Any] | None:
+        """
+        Function to match dark pool orders from institutional and informed traders at the lit order book mid price.
+        """
+        
+        
         trades: List[Trade] = []
 
         while self.bids and self.asks:
 
             while self.bids and self.bids[0].order_id in self.cancelled_ids:
-                # Remove cancelled orders from the front of the bids queue
+                # skip cancelled
                 logging.info(f"-----CANCELLED ORDER REMOVED FROM DP BID QUEUE-----: Removing cancelled order from bids queue: {self.bids[0].order_id}")
                 self.cancelled_ids.discard(self.bids.popleft().order_id)
 
             while self.asks and self.asks[0].order_id in self.cancelled_ids:
-                # Remove cancelled orders from the front of the asks queue
                 logging.info(f"-----CANCELLED ORDER REMOVED FROM DP ASK QUEUE-----: Removing cancelled order from asks queue: {self.asks[0].order_id}")
                 self.cancelled_ids.discard(self.asks.popleft().order_id)
 
             if not self.bids or not self.asks:
-                # No more orders to match
                 logging.warning(f"-----WARNING-----: No more orders to match: bids: {len(self.bids)}, asks: {len(self.asks)}")
                 break
 
-            # Get the best bid and ask
             bid = self.bids[0]
             ask = self.asks[0]
 
@@ -109,7 +109,7 @@ class DarkPool:
                 while self.asks[0].order_id != top_ask_id and self.asks[0].trader_id == bid.trader_id:
                     self.asks.rotate(-1)
                 if self.asks[0].order_id == top_ask_id:
-                    # No more matching asks for this bid
+                    # no match
                     logging.warning(f"-----WARNING-----: No more matching asks for this bid: bid: {bid.trader_id}, ask: {ask.trader_id}")
                     break
                 logging.warning(f"-----WARNING-----: self.asks[0].trader_id == bid.trader_id: bid: {bid.trader_id}, ask: {ask.trader_id}")
@@ -120,24 +120,24 @@ class DarkPool:
                 logging.warning(f"-----WARNING-----: trade_qty <= 0: bid: {bid.trader_id}, ask: {ask.trader_id}, qty: {trade_qty}")
                 break
 
-            # create a trade at the mid price with the matched quantity
+            # trade at mid
             trade = Trade(
                 price = mid_price,
                 qty = trade_qty,
                 timestamp = timestamp,
             )
 
-            # record the trade in the tape and the list of trades for this tick
+            # record trade
             trades.append(trade)
             self.trade_tape.append(trade)
 
             logging.info(f"-----DARK POOL TRADE -----: buyer: {bid.trader_id}, seller: {ask.trader_id}, price: {mid_price}, qty: {trade_qty}, timestamp: {timestamp}")
 
-            # reduce the qty of the matched orders to account for partial fills
+            # partial fills
             bid.qty -= trade_qty
             ask.qty -= trade_qty
 
-            # check if the matched orders are now empty
+            # remove filled
             if bid.qty == 0:
                 self.order_index.pop(self.bids.popleft().order_id, None)
             if ask.qty == 0:
@@ -146,7 +146,11 @@ class DarkPool:
         return trades
 
     def submit_order(self, order: Order) -> list[Trade] | None:
+        """
+        Function to submit an order to the dark pool
+        """
 
+        
         if order.qty <= 0:
             logging.warning(f"-----WARNING: INVALID ORDER QUANTITY-----: Order qty <= 0: order_id: {order.order_id}, qty: {order.qty}")
             return []
@@ -182,6 +186,11 @@ class DarkPool:
         return self.match_orders(mid_price, order.ts)
 
     def tick(self, t: int):
+        """
+        Function to advance the dark pool state by one tick, processing pending routes to the lit book, expiring stale orders, and matching orders at the mid price.
+        """
+       
+       
         self._process_pending_routes(t)
         self._expire_stale_orders(t)
 
@@ -194,6 +203,11 @@ class DarkPool:
         logging.info(f"-----DARK POOL TICK-----: t={t}, active_orders={len(self.order_index)}, pending_routes={len(self.pending_lit_routes)}")
 
     def cancel_order(self, order_id: int) -> bool:
+        """
+        Function to cancel an order from the dark pool
+        """
+        
+        
         if order_id not in self.order_index:
             logging.warning(f"-----WARNING: ORDER NOT FOUND-----: Order not found in order index: order_id: {order_id}")
             return False
@@ -225,6 +239,11 @@ class DarkPool:
         return bid_qty, ask_qty
 
     def recent_volume(self, current_ts: int, lookback: int) -> int:
+        """
+        Function to compute the recent trading volume in the dark pool over a specified lookback period, accounting for tape delay.
+        """
+        
+        
         lookback_start = current_ts - self.tape_delay
         window_start = lookback_start - lookback
 
@@ -247,6 +266,11 @@ class DarkPool:
         )
 
     def _process_pending_routes(self, current_ts: int):
+        """
+        Function to process pending routes to the lit book that are scheduled for execution at the current timestamp, executing them and logging the results.
+        """
+        
+        
         pending_orders = [
             (ts,order) for ts, order in self.pending_lit_routes if current_ts >= ts
         ]
@@ -268,6 +292,11 @@ class DarkPool:
                 )
 
     def _expire_stale_orders(self, current_ts: int) -> List[LitOrder]:
+        """
+        Function to expire stale orders from the dark pool that have been resting.
+        """
+        
+        
         routed_orders: List[LitOrder] = []
 
         for queue in (self.bids, self.asks):
